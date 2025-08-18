@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>动力资源资产管理系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+    <style>
+        /* 为错误信息添加醒目的样式 */
+        .error-message {
+            color: #721c24; /* 深红色文字 */
+            background-color: #f8d7da; /* 淡粉色背景 */
+            border: 1px solid #f5c6cb; /* 粉色边框 */
+            padding: 1rem 1.25rem;
+            margin-bottom: 1rem;
+            border-radius: .25rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>动力资源资产管理系统</h1>
+
+        <!-- 文件上传表单 -->
+        <div class="card">
+            <h2>上传资产 Excel 文件</h2>
+            
+            <!-- 如果有上传错误，则显示错误信息 -->
+            {% if upload_error %}
+                <div class="error-message" role="alert">
+                    <strong>上传失败:</strong> {{ upload_error }}
+                </div>
+            {% endif %}
+
+            <form action="/upload" method="post" enctype="multipart/form-data">
+                <input type="file" name="file" accept=".xlsx, .xls" required>
+                <button type="submit">上传文件</button>
+            </form>
+        </div>
+
+        <!-- 手动添加设备表单 -->
+        <div class="card">
+            <h2>手动添加设备</h2>
+            <form action="/devices" method="post">
+                <div class="form-grid">
+                    <input type="text" name="name" placeholder="设备名称" required>
+                    <input type="text" name="model" placeholder="设备型号">
+                    <input type="text" name="location" placeholder="所在位置">
+                    <input type="text" name="power_rating" placeholder="额定功率">
+                </div>
+                <button type="submit">添加设备</button>
+            </form>
+        </div>
+
+        <!-- 设备列表 -->
+        <div class="card">
+            <h2>设备列表</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>设备名称</th>
+                        <th>设备型号</th>
+                        <th>所在位置</th>
+                        <th>额定功率</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for device in devices %}
+                    <tr>
+                        <td>{{ device.id }}</td>
+                        <td>{{ device.name }}</td>
+                        <td>{{ device.model or 'N/A' }}</td>
+                        <td>{{ device.location or 'N/A' }}</td>
+                        <td>{{ device.power_rating or 'N/A' }}</td>
+                        <td>
+                            <a href="/graph/{{ device.id }}" target="_blank">查看拓扑图</a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6">暂无设备，请上传 Excel 文件或手动添加。</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
