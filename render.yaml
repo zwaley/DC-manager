@@ -1,0 +1,23 @@
+# Render平台部署配置文件
+services:
+  # Web服务配置
+  - type: web
+    name: dc-asset-manager
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
+      - key: PORT
+        value: 10000
+      - key: RENDER
+        value: true
+      - key: ADMIN_PASSWORD
+        # 在Render平台上设置为环境变量
+        sync: false
+    # 数据持久化配置
+    disk:
+      name: database
+      mountPath: /app/database
+      sizeGB: 1

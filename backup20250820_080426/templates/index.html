@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>动力资源资产管理系统</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #2c3e50;
+        }
+        .card {
+            background: #ffffff;
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: center;
+            border-bottom: 1px solid #ddd;
+        }
+        thead th {
+            background-color: #4a69bd;
+            color: #ffffff;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        tbody tr:nth-of-type(even) {
+            background-color: #f8f9fa;
+        }
+        tbody tr:hover {
+            background-color: #e9ecef;
+        }
+        .action-link {
+            display: inline-block;
+            padding: 8px 12px;
+            background-color: #3498db;
+            color: #fff;
+            text-decoration: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        .action-link:hover {
+            background-color: #2980b9;
+        }
+        /* 为错误信息添加醒目的样式 */
+        .error-message {
+            color: #721c24; /* 深红色文字 */
+            background-color: #f8d7da; /* 淡粉色背景 */
+            border: 1px solid #f5c6cb; /* 粉色边框 */
+            padding: 1rem 1.25rem;
+            margin-bottom: 1rem;
+            border-radius: .25rem;
+        }
+        /* 为成功信息添加醒目的样式 */
+        .success-message {
+            color: #155724; /* 深绿色文字 */
+            background-color: #d4edda; /* 淡绿色背景 */
+            border: 1px solid #c3e6cb; /* 绿色边框 */
+            padding: 1rem 1.25rem;
+            margin-bottom: 1rem;
+            border-radius: .25rem;
+            position: relative; /* 为关闭按钮定位 */
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        /* 生命周期状态样式 */
+        .lifecycle-badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+            text-align: center;
+            display: inline-block;
+            min-width: 60px;
+        }
+        
+        .lifecycle-normal {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .lifecycle-warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .lifecycle-expired {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .lifecycle-unknown {
+            background-color: #e2e3e5;
+            color: #383d41;
+            border: 1px solid #d6d8db;
+        }
+        
+        /* 成功信息关闭按钮样式 */
+        .success-message .close-btn {
+            background: none;
+            border: none;
+            color: #155724;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 0;
+            margin-left: 10px;
+            opacity: 0.7;
+        }
+        
+        .success-message .close-btn:hover {
+            opacity: 1;
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .form-grid input {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+        }
+        
+        /* 页面导航按钮样式 */
+        .nav-buttons {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 1000;
+        }
+        
+        .nav-btn {
+            width: 50px;
+            height: 50px;
+            border: none;
+            border-radius: 50%;
+            background-color: #4a69bd;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .nav-btn:hover {
+            background-color: #3c5aa6;
+            transform: scale(1.1);
+        }
+        
+        .nav-btn:active {
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>动力资源资产管理系统</h1>
+
+        <!-- 文件上传表单 -->
+        <div class="card">
+            <h2>上传资产 Excel 文件</h2>
+            
+            <!-- 如果有上传错误，则显示错误信息 -->
+            {% if upload_error %}
+                <div class="error-message" role="alert">
+                    <strong>上传失败:</strong> {{ upload_error }}
+                </div>
+            {% endif %}
+            
+            {% if upload_error %}
+             <div class="error-message">
+                 {{ upload_error }}
+             </div>
+             {% endif %}
+             
+             {% if success_message %}
+             <div class="success-message" id="successMessage">
+                 <span>{{ success_message }}</span>
+                 <button class="close-btn" onclick="closeSuccessMessage()">&times;</button>
+             </div>
+             {% endif %}
+
+            <form action="/upload" method="post" enctype="multipart/form-data">
+                <input type="file" name="file" accept=".xlsx, .xls" required>
+                <input type="password" name="password" placeholder="管理员密码" required style="margin-left: 10px; padding: 8px;">
+                <button type="submit">上传文件</button>
+            </form>
+        </div>
+
+        <!-- 手动添加设备表单 -->
+        <div class="card">
+            <h2>手动添加设备</h2>
+            <form action="/devices" method="post">
+                <div class="form-grid">
+                    <input type="text" name="asset_id" placeholder="资产编号" required>
+                    <input type="text" name="name" placeholder="设备名称" required>
+                    <input type="text" name="station" placeholder="局站" required>
+                    <input type="text" name="device_type" placeholder="设备类型（如：开关电源、UPS、蓄电池等）" required>
+                    <input type="text" name="model" placeholder="设备型号">
+                    <input type="text" name="location" placeholder="所在位置">
+                    <input type="text" name="power_rating" placeholder="额定功率">
+                    <input type="text" name="vendor" placeholder="设备生产厂家">
+                    <input type="text" name="commission_date" placeholder="投产日期">
+                    <input type="text" name="remark" placeholder="备注">
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <input type="password" name="password" placeholder="管理员密码" required style="padding: 8px; width: 200px;">
+                </div>
+                <button type="submit">添加设备</button>
+            </form>
+        </div>
+
+        <!-- 设备列表 -->
+        <div class="card">
+            <h2>设备列表</h2>
+            
+            <!-- 筛选功能 -->
+            <div style="margin-bottom: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 5px; border: 1px solid #e9ecef;">
+                <h3 style="margin-top: 0; color: #495057; font-size: 16px;">筛选设备</h3>
+                <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                    <div>
+                        <label for="stationFilter" style="font-weight: bold; margin-right: 8px;">按局站筛选:</label>
+                        <select id="stationFilter" onchange="filterDevices()" style="padding: 8px; border: 1px solid #ced4da; border-radius: 4px; background-color: white;">
+                            <option value="">全部局站</option>
+                            {% for station in stations %}
+                            <option value="{{ station }}">{{ station }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label for="nameFilter" style="font-weight: bold; margin-right: 8px;">按设备名称筛选:</label>
+                        <input type="text" id="nameFilter" placeholder="输入设备名称" onkeyup="filterDevices()" style="padding: 8px; border: 1px solid #ced4da; border-radius: 4px; width: 200px;">
+                    </div>
+                    <div>
+                        <label for="lifecycleFilter" style="font-weight: bold; margin-right: 8px;">生命周期状态:</label>
+                        <select id="lifecycleFilter" onchange="filterDevices()" style="padding: 8px; border: 1px solid #ced4da; border-radius: 4px; background-color: white;">
+                            <option value="">全部状态</option>
+                            <option value="normal">正常设备</option>
+                            <option value="warning">临近超限</option>
+                            <option value="expired">已超期</option>
+                            <option value="unknown">未配置规则</option>
+                        </select>
+                    </div>
+                    <button onclick="clearFilters()" style="padding: 8px 15px; background-color: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">清除筛选</button>
+                    <button onclick="goToLifecycleManagement()" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px;">生命周期管理</button>
+                </div>
+            </div>
+            
+            <table id="deviceTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>资产编号</th>
+                        <th>设备名称</th>
+                        <th>局站</th>
+                        <th>设备类型</th>
+                        <th>设备型号</th>
+                        <th>所在位置</th>
+                        <th>额定功率</th>
+                        <th>设备生产厂家</th>
+                        <th>投产日期</th>
+                        <th>生命周期状态</th>
+                        <th>备注</th>
+                        <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for device in devices %}
+                <tr data-lifecycle-status="{{ device.lifecycle_status or 'unknown' }}">
+                    <td>{{ device.id }}</td>
+                    <td>{{ device.asset_id }}</td>
+                    <td>{{ device.name }}</td>
+                    <td>{{ device.station or 'N/A' }}</td>
+                    <td>{{ device.device_type or 'N/A' }}</td>
+                    <td>{{ device.model or 'N/A' }}</td>
+                    <td>{{ device.location or 'N/A' }}</td>
+                    <td>{{ device.power_rating or 'N/A' }}</td>
+                    <td>{{ device.vendor or 'N/A' }}</td>
+                    <td>{{ device.commission_date or 'N/A' }}</td>
+                    <td>
+                        <span class="lifecycle-badge lifecycle-{{ device.lifecycle_status or 'unknown' }}">
+                            {{ device.lifecycle_status_text or '未知状态' }}
+                        </span>
+                    </td>
+                    <td>{{ device.remark or 'N/A' }}</td>
+                    <td>
+                        <a href="/graph/{{ device.id }}" target="_blank" class="action-link">查看拓扑图</a> |
+                        <button onclick="editDevice({{ device.id }})" style="background: #007bff; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer; margin-left: 5px;">编辑</button> |
+                        <button onclick="deleteDevice({{ device.id }})" style="background: #dc3545; color: white; border: none; padding: 4px 8px; border-radius: 3px; cursor: pointer; margin-left: 5px;">删除</button>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="13">暂无设备，请上传 Excel 文件或手动添加。</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 页面导航按钮 -->
+    <div class="nav-buttons">
+        <button class="nav-btn" onclick="scrollToTop()" title="回到顶部">
+            ↑
+        </button>
+        <button class="nav-btn" onclick="scrollToBottom()" title="到达底部">
+            ↓
+        </button>
+    </div>
+
+    <script>
+        // 页面滚动功能
+        function scrollToTop() {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        }
+        
+        function scrollToBottom() {
+            window.scrollTo({
+                top: document.body.scrollHeight,
+                behavior: 'smooth'
+            });
+        }
+        
+        // 创建密码输入对话框
+        function showPasswordDialog(title, callback) {
+            // 创建遮罩层
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 1000;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            `;
+            
+            // 创建对话框
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                min-width: 300px;
+                text-align: center;
+            `;
+            
+            dialog.innerHTML = `
+                <h3 style="margin-top: 0; color: #333;">${title}</h3>
+                <input type="password" id="passwordInput" placeholder="请输入管理员密码" 
+                       style="width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;">
+                <div style="margin-top: 15px;">
+                    <button id="confirmBtn" style="background: #007bff; color: white; border: none; padding: 8px 16px; margin: 0 5px; border-radius: 4px; cursor: pointer;">确定</button>
+                    <button id="cancelBtn" style="background: #6c757d; color: white; border: none; padding: 8px 16px; margin: 0 5px; border-radius: 4px; cursor: pointer;">取消</button>
+                </div>
+            `;
+            
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+            
+            const passwordInput = dialog.querySelector('#passwordInput');
+            const confirmBtn = dialog.querySelector('#confirmBtn');
+            const cancelBtn = dialog.querySelector('#cancelBtn');
+            
+            // 聚焦到密码输入框
+            passwordInput.focus();
+            
+            // 处理确定按钮点击
+            const handleConfirm = () => {
+                const password = passwordInput.value;
+                if (password.trim() === '') {
+                    alert('密码不能为空');
+                    passwordInput.focus();
+                    return;
+                }
+                document.body.removeChild(overlay);
+                callback(password);
+            };
+            
+            // 处理取消按钮点击
+            const handleCancel = () => {
+                document.body.removeChild(overlay);
+                callback(null);
+            };
+            
+            confirmBtn.addEventListener('click', handleConfirm);
+            cancelBtn.addEventListener('click', handleCancel);
+            
+            // 支持回车键确认
+            passwordInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    handleConfirm();
+                }
+            });
+            
+            // 支持ESC键取消
+            document.addEventListener('keydown', function escHandler(e) {
+                if (e.key === 'Escape') {
+                    document.removeEventListener('keydown', escHandler);
+                    handleCancel();
+                }
+            });
+        }
+        
+        // 编辑设备函数
+        function editDevice(deviceId) {
+            showPasswordDialog('编辑设备', (password) => {
+                if (password === null) return; // 用户取消
+                
+                // 跳转到编辑页面，传递设备ID和密码
+                window.location.href = `/edit/${deviceId}?password=${encodeURIComponent(password)}`;
+            });
+        }
+        
+        // 删除设备函数
+        function deleteDevice(deviceId) {
+            if (!confirm('确定要删除这个设备吗？此操作不可撤销！')) {
+                return;
+            }
+            
+            showPasswordDialog('删除设备', (password) => {
+                if (password === null) return; // 用户取消
+                
+                // 发送删除请求
+                fetch(`/devices/${deviceId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ password: password })
+                })
+                .then(response => {
+                    if (response.ok) {
+                        alert('设备删除成功');
+                        location.reload(); // 刷新页面
+                    } else {
+                        return response.json().then(data => {
+                            alert(data.detail || '删除失败');
+                        });
+                    }
+                })
+                .catch(error => {
+                    alert('删除失败：' + error.message);
+                });
+            });
+        }
+        
+        // 设备筛选功能
+        function filterDevices() {
+            const stationFilter = document.getElementById('stationFilter').value.toLowerCase();
+            const nameFilter = document.getElementById('nameFilter').value.toLowerCase();
+            const lifecycleFilter = document.getElementById('lifecycleFilter').value;
+            const table = document.getElementById('deviceTable');
+            const rows = table.getElementsByTagName('tbody')[0].getElementsByTagName('tr');
+            
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i];
+                const stationCell = row.cells[3]; // 局站列（第4列，索引为3）
+                const nameCell = row.cells[2];    // 设备名称列（第3列，索引为2）
+                
+                if (stationCell && nameCell) {
+                    const stationText = stationCell.textContent.toLowerCase();
+                    const nameText = nameCell.textContent.toLowerCase();
+                    const lifecycleStatus = row.getAttribute('data-lifecycle-status') || 'unknown';
+                    
+                    const stationMatch = stationFilter === '' || stationText.includes(stationFilter);
+                    const nameMatch = nameFilter === '' || nameText.includes(nameFilter);
+                    const lifecycleMatch = lifecycleFilter === '' || lifecycleStatus === lifecycleFilter;
+                    
+                    if (stationMatch && nameMatch && lifecycleMatch) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
+                }
+            }
+        }
+        
+        // 清除筛选条件
+        function clearFilters() {
+            document.getElementById('stationFilter').value = '';
+            document.getElementById('nameFilter').value = '';
+            document.getElementById('lifecycleFilter').value = '';
+            filterDevices();
+        }
+        
+        // 跳转到生命周期管理页面
+        function goToLifecycleManagement() {
+            window.location.href = '/lifecycle-management';
+        }
+        
+        // 关闭成功信息函数
+        function closeSuccessMessage() {
+            const successMessage = document.getElementById('successMessage');
+            if (successMessage) {
+                successMessage.style.display = 'none';
+                // 清除URL中的success参数
+                const url = new URL(window.location);
+                url.searchParams.delete('success');
+                window.history.replaceState({}, document.title, url.pathname + url.search);
+            }
+        }
+        
+        // 页面加载完成后，5秒后自动隐藏成功信息
+        document.addEventListener('DOMContentLoaded', function() {
+            const successMessage = document.getElementById('successMessage');
+            if (successMessage) {
+                // 5秒后自动隐藏
+                setTimeout(function() {
+                    closeSuccessMessage();
+                }, 5000);
+            }
+        });
+    </script>
+</body>
+</html>

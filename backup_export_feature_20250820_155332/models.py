@@ -1,15 +1,13 @@
 # 导入 SQLAlchemy 所需的模块
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base
-import os
-
-# 导入配置
-from config import DATABASE_URL
 
 # --- 数据库设置 ---
 
-# 确保数据库目录存在
-os.makedirs(os.path.dirname(DATABASE_URL.replace('sqlite:///', '')), exist_ok=True)
+# 定义数据库连接URL
+# 我们将使用 SQLite 数据库。数据库文件将保存在 /app/database/asset.db
+# 这个路径对应于 docker-compose.yml 中定义的命名卷，以实现数据持久化。
+DATABASE_URL = "sqlite:///./database/asset.db"
 
 # 创建数据库引擎
 # connect_args={"check_same_thread": False} 是 SQLite 特有的配置，

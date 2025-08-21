@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+networkx
+pandas
+openpyxl
+python-multipart
+jinja2

@@ -1,6 +1,6 @@
 import os
 from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -9,17 +9,12 @@ from typing import List, Optional
 from urllib.parse import quote
 import io
 import traceback # 导入 traceback 用于打印详细的错误堆栈
-from datetime import datetime, timedelta
-import re
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils.dataframe import dataframe_to_rows
-
-# 导入配置
-from config import ADMIN_PASSWORD, PORT
 
 # 修正了导入，使用正确的函数名和模型
 from models import SessionLocal, Device, Connection, LifecycleRule, create_db_and_tables
+
+# --- 权限控制配置 ---
+ADMIN_PASSWORD = "admin123"  # 管理员密码，实际部署时应该使用更安全的密码
 
 def verify_admin_password(password: str) -> bool:
     """
@@ -34,7 +29,7 @@ def verify_admin_password(password: str) -> bool:
 # --- FastAPI 应用设置 ---
 
 app = FastAPI(
-    title="安吉电信动力设备管理系统",
+    title="动力资源资产管理系统",
     description="一个用于管理和可视化数据中心动力设备资产的Web应用。",
     version="1.1.0" # 版本升级
 )
@@ -126,7 +121,7 @@ async def read_root(request: Request, db: Session = Depends(get_db)):
         print(f"查询到 {device_count} 个设备")
         
         # 获取生命周期规则
-        lifecycle_rules = db.query(LifecycleRule).filter(LifecycleRule.is_active == 'true').all()
+        lifecycle_rules = db.query(LifecycleRule).filter(LifecycleRule.is_active == True).all()
         rules_dict = {rule.device_type: rule for rule in lifecycle_rules}
         print(f"加载了 {len(rules_dict)} 个生命周期规则")
         
@@ -216,20 +211,6 @@ async def read_root(request: Request, db: Session = Depends(get_db)):
         station_list.sort()  # 按字母顺序排序
         print(f"找到 {len(station_list)} 个不同的局站: {station_list}")
         
-        # 获取所有不重复的设备类型列表，用于筛选下拉框
-        print("正在获取设备类型列表...")
-        device_types = db.query(Device.device_type).filter(Device.device_type.isnot(None)).filter(Device.device_type != '').distinct().all()
-        device_type_list = [device_type[0] for device_type in device_types if device_type[0]]  # 提取设备类型并过滤空值
-        device_type_list.sort()  # 按字母顺序排序
-        print(f"找到 {len(device_type_list)} 个不同的设备类型: {device_type_list}")
-        
-        # 获取所有不重复的厂家列表，用于筛选下拉框
-        print("正在获取厂家列表...")
-        vendors = db.query(Device.vendor).filter(Device.vendor.isnot(None)).filter(Device.vendor != '').distinct().all()
-        vendor_list = [vendor[0] for vendor in vendors if vendor[0]]  # 提取厂家名称并过滤空值
-        vendor_list.sort()  # 按字母顺序排序
-        print(f"找到 {len(vendor_list)} 个不同的厂家: {vendor_list}")
-        
         # 检查是否有上传错误信息
         upload_error = request.query_params.get("error")
         if upload_error:
@@ -250,8 +231,6 @@ async def read_root(request: Request, db: Session = Depends(get_db)):
             "request": request, 
             "devices": devices, 
             "stations": station_list,
-            "device_types": device_type_list,
-            "vendors": vendor_list,
             "upload_error": upload_error,
             "success_message": success_message
         })
@@ -268,9 +247,6 @@ async def read_root(request: Request, db: Session = Depends(get_db)):
         return templates.TemplateResponse("index.html", {
             "request": request, 
             "devices": [], 
-            "stations": [],
-            "device_types": [],
-            "vendors": [],
             "upload_error": f"获取设备数据时出错: {e}"
         })
 
@@ -1202,151 +1178,3 @@ async def lifecycle_management_page(request: Request):
         print(f"生命周期管理页面错误: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/export")
-async def export_devices(
-    password: str = Form(...),
-    export_range: str = Form("all"),
-    station_filter: str = Form(""),
-    name_filter: str = Form(""),
-    device_type_filter: str = Form(""),
-    vendor_filter: str = Form(""),
-    lifecycle_filter: str = Form(""),
-    db: Session = Depends(get_db)
-):
-    """
-    导出设备数据为Excel文件
-    支持全量导出和筛选导出，需要管理员密码验证
-    """
-    try:
-        # 验证管理员密码
-        if not verify_admin_password(password):
-            raise HTTPException(status_code=401, detail="密码错误，无权限导出数据")
-        
-        # 根据导出范围查询设备数据
-        query = db.query(Device)
-        
-        # 如果是筛选导出，应用筛选条件
-        if export_range == "filtered":
-            if station_filter:
-                query = query.filter(Device.station.ilike(f"%{station_filter}%"))
-            if name_filter:
-                query = query.filter(Device.name.ilike(f"%{name_filter}%"))
-            if device_type_filter:
-                query = query.filter(Device.device_type.ilike(f"%{device_type_filter}%"))
-            if vendor_filter:
-                query = query.filter(Device.vendor.ilike(f"%{vendor_filter}%"))
-            if lifecycle_filter:
-                # 这里需要根据生命周期状态筛选，暂时跳过复杂的生命周期逻辑
-                pass
-        
-        devices = query.all()
-        
-        if not devices:
-            raise HTTPException(status_code=404, detail="没有找到设备数据")
-        
-        # 创建Excel工作簿
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "设备列表"
-        
-        # 定义表头
-        headers = [
-            "ID", "资产编号", "设备名称", "局站", "设备类型", "设备型号", 
-            "所在位置", "额定容量", "设备生产厂家", "投产日期", "备注"
-        ]
-        
-        # 设置表头样式
-        header_font = Font(bold=True, color="FFFFFF")
-        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
-        header_alignment = Alignment(horizontal="center", vertical="center")
-        border = Border(
-            left=Side(style="thin"),
-            right=Side(style="thin"),
-            top=Side(style="thin"),
-            bottom=Side(style="thin")
-        )
-        
-        # 写入表头
-        for col, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col, value=header)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = header_alignment
-            cell.border = border
-        
-        # 写入设备数据
-        for row, device in enumerate(devices, 2):
-            data = [
-                device.id,
-                device.asset_id,
-                device.name,
-                device.station,
-                device.device_type,
-                device.model,
-                device.location,
-                device.power_rating,
-                device.vendor,
-                device.commission_date.strftime("%Y-%m-%d") if device.commission_date else "",
-                device.remark
-            ]
-            
-            for col, value in enumerate(data, 1):
-                cell = ws.cell(row=row, column=col, value=value)
-                cell.border = border
-                cell.alignment = Alignment(horizontal="left", vertical="center")
-                
-                # 设置斑马纹效果
-                if row % 2 == 0:
-                    cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
-        
-        # 自动调整列宽
-        for column in ws.columns:
-            max_length = 0
-            column_letter = column[0].column_letter
-            for cell in column:
-                try:
-                    if len(str(cell.value)) > max_length:
-                        max_length = len(str(cell.value))
-                except:
-                    pass
-            adjusted_width = min(max_length + 2, 50)  # 限制最大宽度
-            ws.column_dimensions[column_letter].width = adjusted_width
-        
-        # 冻结首行
-        ws.freeze_panes = "A2"
-        
-        # 添加筛选器
-        ws.auto_filter.ref = f"A1:{chr(64 + len(headers))}1"
-        
-        # 生成文件名（包含时间戳）
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if export_range == "filtered":
-            filename = f"设备列表_筛选导出_{timestamp}.xlsx"
-        else:
-            filename = f"设备列表_全量导出_{timestamp}.xlsx"
-        
-        # 将Excel文件保存到内存
-        excel_buffer = io.BytesIO()
-        wb.save(excel_buffer)
-        excel_buffer.seek(0)
-        
-        # 设置响应头
-        headers = {
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
-            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        }
-        
-        # 返回文件流
-        return StreamingResponse(
-            io.BytesIO(excel_buffer.read()),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers=headers
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"导出设备数据错误: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")

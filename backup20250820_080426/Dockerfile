@@ -17,5 +17,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # 容器启动时执行的命令
-# 使用run.py脚本启动应用，它会从config.py中读取PORT配置
-CMD ["python", "run.py"]
+# 启动 uvicorn 服务器，并监听所有网络接口的 8000 端口，以便可以从容器外部访问
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
