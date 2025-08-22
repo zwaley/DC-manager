@@ -1,19 +1,21 @@
 import os
-from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPException
+from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, or_
 import pandas as pd
 from typing import List, Optional
 from urllib.parse import quote
 import io
 import traceback # 导入 traceback 用于打印详细的错误堆栈
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import re
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
+from pydantic import BaseModel
 
 # 导入配置
 from config import ADMIN_PASSWORD, PORT
@@ -35,7 +37,7 @@ def verify_admin_password(password: str) -> bool:
 
 app = FastAPI(
     title="安吉电信动力设备管理系统",
-    description="一个用于管理和可视化数据中心动力设备资产的Web应用。",
+    description="一个用于管理和可视化动力设备资产的Web应用。",
     version="1.1.0" # 版本升级
 )
 
@@ -539,10 +541,237 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                 print(f"  第{row_num}行: {reason}")
             if len(connection_skipped_rows) > 5:
                 print(f"  ... 还有 {len(connection_skipped_rows) - 5} 行连接被跳过")
+        
+        # 步骤 6: 处理Sheet2连接数据
+        sheet2_connections_count = 0
+        sheet2_skipped_rows = []
+        
+        try:
+            print("\n步骤 6: 开始处理Sheet2连接数据...")
+            
+            # 尝试读取Sheet2（连接表）
+            try:
+                # 重置buffer位置到开头，因为之前读取Sheet1时已经移动了位置
+                buffer.seek(0)
+                df_connections = pd.read_excel(buffer, sheet_name='连接')
+                print(f"成功读取Sheet2，共 {len(df_connections)} 行连接数据")
+            except Exception as sheet_error:
+                print(f"无法读取Sheet2（连接表）: {sheet_error}")
+                print("跳过Sheet2处理，继续完成导入")
+                df_connections = None
+            
+            if df_connections is not None and len(df_connections) > 0:
+                # 连接类型映射
+                CONNECTION_TYPE_MAPPING = {
+                    '电缆': 'cable',
+                    '铜排': 'busbar', 
+                    '母线': 'busway',
+                    'cable': 'cable',
+                    'busbar': 'busbar',
+                    'busway': 'busway'
+                }
                 
+                # 辅助函数：获取或创建设备
+                def get_or_create_device(device_name: str, default_station: str = "未知站点"):
+                    """获取设备，如果不存在则自动创建"""
+                    if not device_name:
+                        return None
+                    
+                    device = db.query(Device).filter(Device.name == device_name).first()
+                    if not device:
+                        # 自动创建设备
+                        device = Device(
+                            name=device_name,
+                            asset_id=f"AUTO_{len(device_name)}_{hash(device_name) % 10000:04d}",  # 生成唯一资产编号
+                            station=default_station,
+                            device_type="待确认",
+                            location="待确认",
+                            remark="通过Excel导入时自动创建，请完善设备信息"
+                        )
+                        db.add(device)
+                        db.flush()  # 获取ID但不提交
+                        print(f"  * 自动创建设备: {device_name} (ID: {device.id})")
+                    return device
+                
+                # 统计信息
+                created_devices = []
+                warnings = []
+                
+                for index, row in df_connections.iterrows():
+                    try:
+                        # 获取设备名称
+                        source_device_name = str(row.get('A端设备名称', '')).strip()
+                        target_device_name = str(row.get('B端设备名称', '')).strip()
+                        
+                        # 处理空设备名称的情况
+                        if not source_device_name and not target_device_name:
+                            skip_reason = "A端和B端设备名称都为空"
+                            print(f"  - 第 {index+2} 行：跳过连接，{skip_reason}")
+                            sheet2_skipped_rows.append((index+2, skip_reason))
+                            continue
+                        elif not source_device_name:
+                            skip_reason = "A端设备名称为空"
+                            print(f"  - 第 {index+2} 行：跳过连接，{skip_reason}")
+                            sheet2_skipped_rows.append((index+2, skip_reason))
+                            continue
+                        elif not target_device_name:
+                            skip_reason = "B端设备名称为空"
+                            print(f"  - 第 {index+2} 行：跳过连接，{skip_reason}")
+                            sheet2_skipped_rows.append((index+2, skip_reason))
+                            continue
+                        
+                        # 获取或创建设备
+                        source_device = get_or_create_device(source_device_name)
+                        target_device = get_or_create_device(target_device_name)
+                        
+                        if not source_device or not target_device:
+                            skip_reason = "设备创建失败"
+                            print(f"  - 第 {index+2} 行：跳过连接，{skip_reason}")
+                            sheet2_skipped_rows.append((index+2, skip_reason))
+                            continue
+                        
+                        # 记录新创建的设备
+                        if source_device.remark and "通过Excel导入时自动创建" in source_device.remark:
+                            if source_device_name not in created_devices:
+                                created_devices.append(source_device_name)
+                        if target_device.remark and "通过Excel导入时自动创建" in target_device.remark:
+                            if target_device_name not in created_devices:
+                                created_devices.append(target_device_name)
+                        
+                        # 处理端口逻辑
+                        def build_port_info(fuse_number, fuse_spec, breaker_number, breaker_spec):
+                            """构建端口信息，优先使用熔丝，其次使用空开"""
+                            fuse_num = str(fuse_number).strip() if pd.notna(fuse_number) else ''
+                            fuse_sp = str(fuse_spec).strip() if pd.notna(fuse_spec) else ''
+                            breaker_num = str(breaker_number).strip() if pd.notna(breaker_number) else ''
+                            breaker_sp = str(breaker_spec).strip() if pd.notna(breaker_spec) else ''
+                            
+                            if fuse_num and fuse_num != 'nan':
+                                return f"{fuse_num} ({fuse_sp})" if fuse_sp and fuse_sp != 'nan' else fuse_num
+                            elif breaker_num and breaker_num != 'nan':
+                                return f"{breaker_num} ({breaker_sp})" if breaker_sp and breaker_sp != 'nan' else breaker_num
+                            else:
+                                return None
+                        
+                        # 构建A端和B端端口信息
+                        source_port = build_port_info(
+                            row.get('A端熔丝编号'), row.get('A端熔丝规格'),
+                            row.get('A端空开编号'), row.get('A端空开规格')
+                        )
+                        target_port = build_port_info(
+                            row.get('B端熔丝编号'), row.get('B端熔丝规格'),
+                            row.get('B端空开编号'), row.get('空开规格')
+                        )
+                        
+                        # 处理连接类型
+                        connection_type_raw = str(row.get('连接类型（电缆 / 铜排 / 母线）', 'cable')).strip()
+                        connection_type = CONNECTION_TYPE_MAPPING.get(connection_type_raw, 'cable')
+                        
+                        # 检查是否已存在相同连接
+                        existing_connection = db.query(Connection).filter(
+                            Connection.source_device_id == source_device.id,
+                            Connection.target_device_id == target_device.id,
+                            Connection.source_port == source_port,
+                            Connection.target_port == target_port
+                        ).first()
+                        
+                        if existing_connection:
+                            skip_reason = "连接已存在"
+                            print(f"  - 第 {index+2} 行：跳过连接，{skip_reason}")
+                            sheet2_skipped_rows.append((index+2, skip_reason))
+                            continue
+                        
+                        # 创建连接对象
+                        connection = Connection(
+                            source_device_id=source_device.id,
+                            target_device_id=target_device.id,
+                            source_port=source_port,
+                            target_port=target_port,
+                            # A端信息
+                            source_fuse_number=str(row.get('A端熔丝编号', '')).strip() if pd.notna(row.get('A端熔丝编号')) else None,
+                            source_fuse_spec=str(row.get('A端熔丝规格', '')).strip() if pd.notna(row.get('A端熔丝规格')) else None,
+                            source_breaker_number=str(row.get('A端空开编号', '')).strip() if pd.notna(row.get('A端空开编号')) else None,
+                            source_breaker_spec=str(row.get('A端空开规格', '')).strip() if pd.notna(row.get('A端空开规格')) else None,
+                            # B端信息
+                            target_fuse_number=str(row.get('B端熔丝编号', '')).strip() if pd.notna(row.get('B端熔丝编号')) else None,
+                            target_fuse_spec=str(row.get('B端熔丝规格', '')).strip() if pd.notna(row.get('B端熔丝规格')) else None,
+                            target_breaker_number=str(row.get('B端空开编号', '')).strip() if pd.notna(row.get('B端空开编号')) else None,
+                            target_breaker_spec=str(row.get('空开规格', '')).strip() if pd.notna(row.get('空开规格')) else None,
+                            target_device_location=str(row.get('B端设备位置（非动力设备）', '')).strip() if pd.notna(row.get('B端设备位置（非动力设备）')) else None,
+                            # 连接信息
+                            hierarchy_relation=str(row.get('上下级', '')).strip() if pd.notna(row.get('上下级')) else None,
+                            upstream_downstream=str(row.get('上下游', '')).strip() if pd.notna(row.get('上下游')) else None,
+                            connection_type=connection_type,
+                            cable_model=str(row.get('电缆型号', '')).strip() if pd.notna(row.get('电缆型号')) else None,
+                            # 附加信息
+                            source_device_photo=str(row.get('A端设备照片', '')).strip() if pd.notna(row.get('A端设备照片')) else None,
+                            target_device_photo=str(row.get('B端设备照片', '')).strip() if pd.notna(row.get('B端设备照片')) else None,
+                            remark=str(row.get('备注', '')).strip() if pd.notna(row.get('备注')) else None
+                        )
+                        
+                        db.add(connection)
+                        sheet2_connections_count += 1
+                        print(f"  - 第 {index+2} 行：准备创建从 '{source_device_name}' 到 '{target_device_name}' 的连接")
+                        print(f"    源端口: {source_port}, 目标端口: {target_port}, 连接类型: {connection_type}")
+                        
+                    except Exception as conn_error:
+                        skip_reason = f"处理连接失败: {conn_error}"
+                        print(f"  - 第 {index+2} 行：跳过连接，{skip_reason}")
+                        sheet2_skipped_rows.append((index+2, skip_reason))
+                        continue
+                
+                # 提交Sheet2连接
+                if sheet2_connections_count > 0:
+                    print(f"\n准备提交 {sheet2_connections_count} 个Sheet2连接到数据库...")
+                    try:
+                        db.commit()
+                        print("Sheet2连接提交成功！")
+                    except Exception as commit_error:
+                        print(f"Sheet2连接提交失败: {commit_error}")
+                        db.rollback()
+                        raise commit_error
+                
+                # 生成详细的导入报告
+                print(f"\n=== Sheet2连接导入报告 ===")
+                print(f"总连接数: {len(df_connections)} 行")
+                print(f"成功导入: {sheet2_connections_count} 个连接")
+                print(f"跳过连接: {len(sheet2_skipped_rows)} 行")
+                
+                if created_devices:
+                    print(f"\n自动创建的设备 ({len(created_devices)} 个):")
+                    for device_name in created_devices:
+                        print(f"  + {device_name}")
+                    print("\n注意: 自动创建的设备信息不完整，请在设备管理页面完善相关信息。")
+                
+                if sheet2_skipped_rows:
+                    print(f"\n跳过的连接详情:")
+                    skip_reasons = {}
+                    for row_num, reason in sheet2_skipped_rows:
+                        if reason not in skip_reasons:
+                            skip_reasons[reason] = []
+                        skip_reasons[reason].append(row_num)
+                    
+                    for reason, rows in skip_reasons.items():
+                        print(f"  {reason}: {len(rows)} 行 (第{', '.join(map(str, rows[:3]))}行{'...' if len(rows) > 3 else ''})")
+                
+                # 计算导入成功率
+                success_rate = (sheet2_connections_count / len(df_connections)) * 100 if len(df_connections) > 0 else 0
+                print(f"\n导入成功率: {success_rate:.1f}% ({sheet2_connections_count}/{len(df_connections)})")
+            
+            print(f"步骤 6: 完成。从Sheet2创建了 {sheet2_connections_count} 个连接")
+            
+        except Exception as sheet2_error:
+            print(f"处理Sheet2时出错: {sheet2_error}")
+            print("继续完成导入，忽略Sheet2错误")
+        
+        # 最终统计
+        final_connection_count = db.query(Connection).count()
+        total_connections_created = connections_created_count + sheet2_connections_count
+        
         print("\n=== Excel文件增量更新处理成功 ===")
-        print(f"处理结果: 新建 {devices_created_count} 个设备, 更新 {devices_updated_count} 个设备, 创建 {connections_created_count} 个连接")
-        print(f"数据库最终状态: {actual_device_count} 个设备, {actual_connection_count} 个连接")
+        print(f"处理结果: 新建 {devices_created_count} 个设备, 更新 {devices_updated_count} 个设备")
+        print(f"连接创建: Sheet1创建 {connections_created_count} 个, Sheet2创建 {sheet2_connections_count} 个, 总计 {total_connections_created} 个")
+        print(f"数据库最终状态: {actual_device_count} 个设备, {final_connection_count} 个连接")
 
     except Exception as e:
         print(f"\n!!! 发生异常，开始回滚事务 !!!")
@@ -778,6 +1007,65 @@ async def get_graph_data(device_id: int, db: Session = Depends(get_db)):
     return JSONResponse(content={"nodes": nodes, "edges": edges})
 
 
+# 新增API路径：/api/power-chain/{device_id} - 与/graph_data/{device_id}功能相同，保持向后兼容
+@app.get("/api/power-chain/{device_id}")
+async def get_power_chain_data(device_id: int, db: Session = Depends(get_db)):
+    """获取设备电力链路拓扑图数据 - 新的API路径
+    
+    Args:
+        device_id: 设备ID
+        db: 数据库会话
+        
+    Returns:
+        JSONResponse: 包含nodes和edges的拓扑图数据
+    """
+    nodes = []
+    edges = []
+    processed_ids = set()
+
+    device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    queue = [device]
+    visited_ids = {device.id}
+
+    while queue:
+        current_device = queue.pop(0)
+
+        if current_device.id not in processed_ids:
+            # 在悬浮提示中也加入资产编号
+            nodes.append({
+                "id": current_device.id,
+                "label": current_device.name,
+                "title": f"""<b>资产编号:</b> {current_device.asset_id}<br>
+                             <b>名称:</b> {current_device.name}<br>
+                             <b>型号:</b> {current_device.model or 'N/A'}<br>
+                             <b>位置:</b> {current_device.location or 'N/A'}<br>
+                             <b>功率:</b> {current_device.power_rating or 'N/A'}""",
+                "level": 0 
+            })
+            processed_ids.add(current_device.id)
+
+        # 向上游查找
+        for conn in current_device.target_connections:
+            source_device = conn.source_device
+            if source_device and source_device.id not in visited_ids:
+                edges.append({"from": source_device.id, "to": current_device.id, "arrows": "to", "label": conn.cable_type or ""})
+                visited_ids.add(source_device.id)
+                queue.append(source_device)
+
+        # 向下游查找
+        for conn in current_device.source_connections:
+            target_device = conn.target_device
+            if target_device and target_device.id not in visited_ids:
+                edges.append({"from": current_device.id, "to": target_device.id, "arrows": "to", "label": conn.cable_type or ""})
+                visited_ids.add(target_device.id)
+                queue.append(target_device)
+                
+    return JSONResponse(content={"nodes": nodes, "edges": edges})
+
+
 @app.get("/graph/{device_id}", response_class=HTMLResponse)
 async def get_power_chain_graph(request: Request, device_id: int):
     return templates.TemplateResponse("graph.html", {"request": request, "device_id": device_id})
@@ -953,6 +1241,60 @@ async def delete_lifecycle_rule(rule_id: int, password: str = Form(...), db: Ses
         db.rollback()
         print(f"删除生命周期规则失败: {e}")
         return JSONResponse(content={"success": False, "message": str(e)}, status_code=500)
+
+
+@app.get("/api/devices")
+async def get_devices_api(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(50, ge=1, le=200, description="每页数量"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取设备列表API接口
+    """
+    try:
+        # 构建查询
+        query = db.query(Device)
+        
+        # 计算总数
+        total = query.count()
+        
+        # 应用分页
+        offset = (page - 1) * page_size
+        devices = query.offset(offset).limit(page_size).all()
+        
+        # 构建响应数据
+        result = []
+        for device in devices:
+            result.append({
+                "id": device.id,
+                "asset_id": device.asset_id,
+                "name": device.name,
+                "station": device.station,
+                "model": device.model,
+                "device_type": device.device_type,
+                "location": device.location,
+                "power_rating": device.power_rating,
+                "vendor": device.vendor,
+                "commission_date": device.commission_date.isoformat() if device.commission_date and hasattr(device.commission_date, 'isoformat') else device.commission_date,
+                "remark": device.remark
+            })
+        
+        return JSONResponse(content={
+            "success": True,
+            "data": result,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": (total + page_size - 1) // page_size
+            }
+        })
+        
+    except Exception as e:
+        print(f"获取设备列表失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取设备列表失败: {str(e)}")
 
 
 @app.get("/api/devices/lifecycle-status")
@@ -1203,6 +1545,24 @@ async def lifecycle_management_page(request: Request):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/connections", response_class=HTMLResponse)
+async def connections_page(request: Request):
+    """
+    连接管理页面
+    """
+    print("=== 访问连接管理页面 ===")
+    print(f"请求URL: {request.url}")
+    print(f"请求方法: {request.method}")
+    try:
+        print("正在渲染模板...")
+        response = templates.TemplateResponse("connections.html", {"request": request})
+        print("模板渲染成功")
+        return response
+    except Exception as e:
+        print(f"连接管理页面错误: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/export")
 async def export_devices(
     password: str = Form(...),
@@ -1350,3 +1710,633 @@ async def export_devices(
         print(f"导出设备数据错误: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
+
+
+# --- 连接管理 Pydantic 模型 ---
+
+class ConnectionCreate(BaseModel):
+    """创建连接的请求模型"""
+    source_device_id: int
+    target_device_id: int
+    connection_type: Optional[str] = None
+    cable_model: Optional[str] = None
+    source_fuse_number: Optional[str] = None
+    source_fuse_spec: Optional[str] = None
+    source_breaker_number: Optional[str] = None
+    source_breaker_spec: Optional[str] = None
+    target_fuse_number: Optional[str] = None
+    target_fuse_spec: Optional[str] = None
+    target_breaker_number: Optional[str] = None
+    target_breaker_spec: Optional[str] = None
+    hierarchy_relation: Optional[str] = None
+    upstream_downstream: Optional[str] = None
+    parallel_count: Optional[int] = 1
+    rated_current: Optional[float] = None
+    cable_length: Optional[float] = None
+    source_device_photo: Optional[str] = None
+    target_device_photo: Optional[str] = None
+    remark: Optional[str] = None
+    installation_date: Optional[date] = None
+
+class ConnectionUpdate(BaseModel):
+    """更新连接的请求模型"""
+    source_device_id: Optional[int] = None
+    target_device_id: Optional[int] = None
+    connection_type: Optional[str] = None
+    cable_model: Optional[str] = None
+    source_fuse_number: Optional[str] = None
+    source_fuse_spec: Optional[str] = None
+    source_breaker_number: Optional[str] = None
+    source_breaker_spec: Optional[str] = None
+    target_fuse_number: Optional[str] = None
+    target_fuse_spec: Optional[str] = None
+    target_breaker_number: Optional[str] = None
+    target_breaker_spec: Optional[str] = None
+    hierarchy_relation: Optional[str] = None
+    upstream_downstream: Optional[str] = None
+    parallel_count: Optional[int] = None
+    rated_current: Optional[float] = None
+    cable_length: Optional[float] = None
+    source_device_photo: Optional[str] = None
+    target_device_photo: Optional[str] = None
+    remark: Optional[str] = None
+    installation_date: Optional[date] = None
+
+class ConnectionResponse(BaseModel):
+    """连接响应模型"""
+    id: int
+    source_device_id: int
+    target_device_id: int
+    source_device_name: str
+    target_device_name: str
+    connection_type: Optional[str]
+    cable_model: Optional[str]
+    source_fuse_number: Optional[str]
+    source_fuse_spec: Optional[str]
+    source_breaker_number: Optional[str]
+    source_breaker_spec: Optional[str]
+    target_fuse_number: Optional[str]
+    target_fuse_spec: Optional[str]
+    target_breaker_number: Optional[str]
+    target_breaker_spec: Optional[str]
+    hierarchy_relation: Optional[str]
+    upstream_downstream: Optional[str]
+    parallel_count: Optional[int]
+    rated_current: Optional[float]
+    cable_length: Optional[float]
+    source_device_photo: Optional[str]
+    target_device_photo: Optional[str]
+    remark: Optional[str]
+    installation_date: Optional[date]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    
+    class Config:
+        # 启用ORM模式，允许从SQLAlchemy模型创建
+        from_attributes = True
+        # 自定义JSON编码器处理日期时间对象
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None,
+            date: lambda v: v.isoformat() if v else None
+        }
+
+
+# --- 连接管理 RESTful API 接口 ---
+
+@app.get("/api/connections/statistics")
+async def get_connections_statistics(db: Session = Depends(get_db)):
+    """
+    获取连接统计信息
+    """
+    try:
+        # 总连接数
+        total_connections = db.query(Connection).count()
+        
+        # 按连接类型统计
+        connection_type_stats = db.query(
+            Connection.connection_type,
+            func.count(Connection.id).label('count')
+        ).group_by(Connection.connection_type).all()
+        
+        # 将混合的中英文连接类型统计合并为标准格式
+        cable_count = 0
+        busbar_count = 0
+        bus_count = 0
+        
+        for item in connection_type_stats:
+            conn_type = item[0] or ""
+            count = item[1]
+            
+            # 电缆类型（cable 或 电缆）
+            if conn_type.lower() in ['cable', '电缆']:
+                cable_count += count
+            # 铜排类型（busbar 或 铜排）
+            elif conn_type.lower() in ['busbar', '铜排']:
+                busbar_count += count
+            # 母线类型（bus、busway 或 母线）
+            elif conn_type.lower() in ['bus', 'busway', '母线']:
+                bus_count += count
+        
+        # 按设备类型统计（源设备）
+        device_type_stats = db.query(
+            Device.device_type,
+            func.count(Connection.id).label('count')
+        ).join(Connection, Device.id == Connection.source_device_id)\
+         .group_by(Device.device_type).all()
+        
+        # 最近30天新增连接数
+        thirty_days_ago = datetime.now() - timedelta(days=30)
+        recent_connections = db.query(Connection)\
+            .filter(Connection.created_at >= thirty_days_ago).count()
+        
+        return JSONResponse(content={
+            "success": True,
+            "data": {
+                "total": total_connections,
+                "cable": cable_count,
+                "busbar": busbar_count,
+                "bus": bus_count,
+                "recent_connections": recent_connections,
+                "connection_types": [
+                    {"type": item[0] or "未分类", "count": item[1]} 
+                    for item in connection_type_stats
+                ],
+                "device_types": [
+                    {"type": item[0] or "未分类", "count": item[1]} 
+                    for item in device_type_stats
+                ]
+            }
+        })
+        
+    except Exception as e:
+        print(f"获取连接统计失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取连接统计失败: {str(e)}")
+
+
+@app.get("/api/connections")
+async def get_connections(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(100, ge=1, le=5000, description="每页数量"),
+    source_device_id: Optional[int] = Query(None, description="源设备ID"),
+    target_device_id: Optional[int] = Query(None, description="目标设备ID"),
+    connection_type: Optional[str] = Query(None, description="连接类型"),
+    device_name: Optional[str] = Query(None, description="设备名称（模糊查询，匹配源设备或目标设备）"),
+    db: Session = Depends(get_db)
+):
+    """
+    获取连接列表
+    支持分页和筛选功能
+    """
+    try:
+        # 构建查询
+        # 创建Device表的别名用于目标设备
+        target_device = aliased(Device)
+        query = db.query(Connection, Device.name.label('source_device_name'), target_device.name.label('target_device_name'))\
+                  .join(Device, Connection.source_device_id == Device.id)\
+                  .join(target_device, Connection.target_device_id == target_device.id)
+        
+        # 应用筛选条件
+        if source_device_id:
+            query = query.filter(Connection.source_device_id == source_device_id)
+        if target_device_id:
+            query = query.filter(Connection.target_device_id == target_device_id)
+        if connection_type:
+            query = query.filter(Connection.connection_type.ilike(f"%{connection_type}%"))
+        # 按设备名称模糊查询（匹配源设备或目标设备）
+        if device_name:
+            query = query.filter(
+                or_(
+                    Device.name.ilike(f"%{device_name}%"),  # 匹配源设备名称
+                    target_device.name.ilike(f"%{device_name}%")  # 匹配目标设备名称
+                )
+            )
+        
+        # 计算总数
+        total = query.count()
+        
+        # 应用分页
+        offset = (page - 1) * page_size
+        results = query.offset(offset).limit(page_size).all()
+        
+        # 构建响应数据 - 手动序列化日期字段以避免JSON序列化错误
+        result = []
+        for conn, source_name, target_name in results:
+            # 手动处理日期字段的序列化
+            installation_date_str = conn.installation_date.isoformat() if conn.installation_date else None
+            created_at_str = conn.created_at.isoformat() if conn.created_at else None
+            updated_at_str = conn.updated_at.isoformat() if conn.updated_at else None
+            
+            result.append({
+                "id": conn.id,
+                "source_device_id": conn.source_device_id,
+                "target_device_id": conn.target_device_id,
+                "source_device_name": source_name,
+                "target_device_name": target_name,
+                "connection_type": conn.connection_type,
+                "cable_model": conn.cable_model,
+                "source_fuse_number": conn.source_fuse_number,
+                "source_fuse_spec": conn.source_fuse_spec,
+                "source_breaker_number": conn.source_breaker_number,
+                "source_breaker_spec": conn.source_breaker_spec,
+                "target_fuse_number": conn.target_fuse_number,
+                "target_fuse_spec": conn.target_fuse_spec,
+                "target_breaker_number": conn.target_breaker_number,
+                "target_breaker_spec": conn.target_breaker_spec,
+                "hierarchy_relation": conn.hierarchy_relation,
+                "upstream_downstream": conn.upstream_downstream,
+                "parallel_count": conn.parallel_count,
+                "rated_current": conn.rated_current,
+                "cable_length": conn.cable_length,
+                "source_device_photo": conn.source_device_photo,
+                "target_device_photo": conn.target_device_photo,
+                "remark": conn.remark,
+                "installation_date": installation_date_str,
+                "created_at": created_at_str,
+                "updated_at": updated_at_str
+            })
+
+        return {
+            "success": True,
+            "data": result,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "total_pages": (total + page_size - 1) // page_size
+            }
+        }
+        
+    except Exception as e:
+        print(f"获取连接列表失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取连接列表失败: {str(e)}")
+
+
+@app.post("/api/connections")
+async def create_connection(
+    source_device_id: int = Form(...),
+    target_device_id: int = Form(...),
+    connection_type: Optional[str] = Form(None),
+    cable_model: Optional[str] = Form(None),
+    source_port: Optional[str] = Form(None),
+    target_port: Optional[str] = Form(None),
+    source_fuse_number: Optional[str] = Form(None),
+    source_fuse_spec: Optional[str] = Form(None),
+    source_breaker_number: Optional[str] = Form(None),
+    source_breaker_spec: Optional[str] = Form(None),
+    target_fuse_number: Optional[str] = Form(None),
+    target_fuse_spec: Optional[str] = Form(None),
+    target_breaker_number: Optional[str] = Form(None),
+    target_breaker_spec: Optional[str] = Form(None),
+    hierarchy_relation: Optional[str] = Form(None),
+    upstream_downstream: Optional[str] = Form(None),
+    parallel_count: Optional[int] = Form(1),
+    rated_current: Optional[float] = Form(None),
+    cable_length: Optional[float] = Form(None),
+    source_device_photo: Optional[str] = Form(None),
+    target_device_photo: Optional[str] = Form(None),
+    remark: Optional[str] = Form(None),
+    installation_date: Optional[str] = Form(None),
+    password: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """
+    创建新连接
+    需要管理员密码验证
+    """
+    try:
+        # 验证管理员密码
+        if not verify_admin_password(password):
+            raise HTTPException(status_code=401, detail="密码错误")
+        
+        # 处理日期字段 - 支持yyyymm格式
+        parsed_installation_date = None
+        if installation_date:
+            try:
+                # 支持yyyymm格式，如202412
+                if len(installation_date) == 6 and installation_date.isdigit():
+                    year = int(installation_date[:4])
+                    month = int(installation_date[4:6])
+                    parsed_installation_date = datetime(year, month, 1).date()
+                else:
+                    raise ValueError("日期格式不正确")
+            except ValueError:
+                raise HTTPException(status_code=400, detail="安装日期格式错误，请使用YYYYMM格式（如：202412）")
+        
+        # 验证源设备和目标设备是否存在
+        source_device = db.query(Device).filter(Device.id == source_device_id).first()
+        if not source_device:
+            raise HTTPException(status_code=404, detail=f"源设备ID {source_device_id} 不存在")
+        
+        target_device = db.query(Device).filter(Device.id == target_device_id).first()
+        if not target_device:
+            raise HTTPException(status_code=404, detail=f"目标设备ID {target_device_id} 不存在")
+        
+        # 检查是否已存在相同的连接
+        existing_connection = db.query(Connection).filter(
+            Connection.source_device_id == source_device_id,
+            Connection.target_device_id == target_device_id
+        ).first()
+        
+        if existing_connection:
+            raise HTTPException(status_code=400, detail="该连接已存在")
+        
+        # 创建新连接
+        new_connection = Connection(
+            source_device_id=source_device_id,
+            target_device_id=target_device_id,
+            source_port=source_port,
+            target_port=target_port,
+            connection_type=connection_type,
+            cable_model=cable_model,
+            source_fuse_number=source_fuse_number,
+            source_fuse_spec=source_fuse_spec,
+            source_breaker_number=source_breaker_number,
+            source_breaker_spec=source_breaker_spec,
+            target_fuse_number=target_fuse_number,
+            target_fuse_spec=target_fuse_spec,
+            target_breaker_number=target_breaker_number,
+            target_breaker_spec=target_breaker_spec,
+            hierarchy_relation=hierarchy_relation,
+            upstream_downstream=upstream_downstream,
+            parallel_count=parallel_count,
+            rated_current=rated_current,
+            cable_length=cable_length,
+            source_device_photo=source_device_photo,
+            target_device_photo=target_device_photo,
+            remark=remark,
+            installation_date=parsed_installation_date,
+            created_at=datetime.now()
+        )
+        
+        db.add(new_connection)
+        db.commit()
+        db.refresh(new_connection)
+        
+        # 构建响应
+        response = ConnectionResponse(
+            id=new_connection.id,
+            source_device_id=new_connection.source_device_id,
+            target_device_id=new_connection.target_device_id,
+            source_device_name=source_device.name,
+            target_device_name=target_device.name,
+            connection_type=new_connection.connection_type,
+            cable_model=new_connection.cable_model,
+            source_fuse_number=new_connection.source_fuse_number,
+            source_fuse_spec=new_connection.source_fuse_spec,
+            source_breaker_number=new_connection.source_breaker_number,
+            source_breaker_spec=new_connection.source_breaker_spec,
+            target_fuse_number=new_connection.target_fuse_number,
+            target_fuse_spec=new_connection.target_fuse_spec,
+            target_breaker_number=new_connection.target_breaker_number,
+            target_breaker_spec=new_connection.target_breaker_spec,
+            hierarchy_relation=new_connection.hierarchy_relation,
+            upstream_downstream=new_connection.upstream_downstream,
+            parallel_count=new_connection.parallel_count,
+            rated_current=new_connection.rated_current,
+            cable_length=new_connection.cable_length,
+            source_device_photo=new_connection.source_device_photo,
+            target_device_photo=new_connection.target_device_photo,
+            remark=new_connection.remark,
+            installation_date=new_connection.installation_date,
+            created_at=new_connection.created_at,
+            updated_at=new_connection.updated_at
+        )
+        
+        # 手动处理日期字段序列化
+        response_data = {
+            "id": new_connection.id,
+            "source_device_id": new_connection.source_device_id,
+            "target_device_id": new_connection.target_device_id,
+            "source_device_name": source_device.name,
+            "target_device_name": target_device.name,
+            "connection_type": new_connection.connection_type,
+            "cable_model": new_connection.cable_model,
+            "source_fuse_number": new_connection.source_fuse_number,
+            "source_fuse_spec": new_connection.source_fuse_spec,
+            "source_breaker_number": new_connection.source_breaker_number,
+            "source_breaker_spec": new_connection.source_breaker_spec,
+            "target_fuse_number": new_connection.target_fuse_number,
+            "target_fuse_spec": new_connection.target_fuse_spec,
+            "target_breaker_number": new_connection.target_breaker_number,
+            "target_breaker_spec": new_connection.target_breaker_spec,
+            "hierarchy_relation": new_connection.hierarchy_relation,
+            "upstream_downstream": new_connection.upstream_downstream,
+            "parallel_count": new_connection.parallel_count,
+            "rated_current": new_connection.rated_current,
+            "cable_length": new_connection.cable_length,
+            "source_device_photo": new_connection.source_device_photo,
+            "target_device_photo": new_connection.target_device_photo,
+            "remark": new_connection.remark,
+            "installation_date": new_connection.installation_date.isoformat() if new_connection.installation_date else None,
+            "created_at": new_connection.created_at.isoformat() if new_connection.created_at else None,
+            "updated_at": new_connection.updated_at.isoformat() if new_connection.updated_at else None
+        }
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": "连接创建成功",
+            "data": response_data
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"创建连接失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"创建连接失败: {str(e)}")
+
+
+@app.put("/api/connections/{connection_id}", response_model=ConnectionResponse)
+async def update_connection(
+    connection_id: int,
+    connection: ConnectionUpdate,
+    password: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """
+    更新连接信息
+    需要管理员密码验证
+    """
+    try:
+        # 验证管理员密码
+        if not verify_admin_password(password):
+            raise HTTPException(status_code=401, detail="密码错误")
+        
+        # 查找要更新的连接
+        existing_connection = db.query(Connection).filter(Connection.id == connection_id).first()
+        if not existing_connection:
+            raise HTTPException(status_code=404, detail="连接不存在")
+        
+        # 如果要更新设备ID，验证设备是否存在
+        if connection.source_device_id is not None:
+            source_device = db.query(Device).filter(Device.id == connection.source_device_id).first()
+            if not source_device:
+                raise HTTPException(status_code=404, detail=f"源设备ID {connection.source_device_id} 不存在")
+            existing_connection.source_device_id = connection.source_device_id
+        
+        if connection.target_device_id is not None:
+            target_device = db.query(Device).filter(Device.id == connection.target_device_id).first()
+            if not target_device:
+                raise HTTPException(status_code=404, detail=f"目标设备ID {connection.target_device_id} 不存在")
+            existing_connection.target_device_id = connection.target_device_id
+        
+        # 更新其他字段
+        update_data = connection.dict(exclude_unset=True)
+        for field, value in update_data.items():
+            if field not in ['source_device_id', 'target_device_id']:  # 这两个字段已经处理过了
+                setattr(existing_connection, field, value)
+        
+        existing_connection.updated_at = datetime.now()
+        
+        db.commit()
+        db.refresh(existing_connection)
+        
+        # 构建响应
+        response = ConnectionResponse(
+            id=existing_connection.id,
+            source_device_id=existing_connection.source_device_id,
+            target_device_id=existing_connection.target_device_id,
+            source_device_name=existing_connection.source_device.name,
+            target_device_name=existing_connection.target_device.name,
+            connection_type=existing_connection.connection_type,
+            cable_model=existing_connection.cable_model,
+            source_fuse_number=existing_connection.source_fuse_number,
+            source_fuse_spec=existing_connection.source_fuse_spec,
+            source_breaker_number=existing_connection.source_breaker_number,
+            source_breaker_spec=existing_connection.source_breaker_spec,
+            target_fuse_number=existing_connection.target_fuse_number,
+            target_fuse_spec=existing_connection.target_fuse_spec,
+            target_breaker_number=existing_connection.target_breaker_number,
+            target_breaker_spec=existing_connection.target_breaker_spec,
+            hierarchy_relation=existing_connection.hierarchy_relation,
+            upstream_downstream=existing_connection.upstream_downstream,
+            parallel_count=existing_connection.parallel_count,
+            rated_current=existing_connection.rated_current,
+            cable_length=existing_connection.cable_length,
+            source_device_photo=existing_connection.source_device_photo,
+            target_device_photo=existing_connection.target_device_photo,
+            remark=existing_connection.remark,
+            installation_date=existing_connection.installation_date,
+            created_at=existing_connection.created_at,
+            updated_at=existing_connection.updated_at
+        )
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": "连接更新成功",
+            "data": response.dict()
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"更新连接失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"更新连接失败: {str(e)}")
+
+
+@app.delete("/api/connections/{connection_id}")
+async def delete_connection(
+    connection_id: int,
+    password: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """
+    删除连接
+    需要管理员密码验证
+    """
+    try:
+        # 验证管理员密码
+        if not verify_admin_password(password):
+            raise HTTPException(status_code=401, detail="密码错误")
+        
+        # 查找要删除的连接
+        connection = db.query(Connection).filter(Connection.id == connection_id).first()
+        if not connection:
+            raise HTTPException(status_code=404, detail="连接不存在")
+        
+        # 删除连接
+        db.delete(connection)
+        db.commit()
+        
+        return JSONResponse(content={
+            "success": True,
+            "message": "连接删除成功"
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        print(f"删除连接失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"删除连接失败: {str(e)}")
+
+
+@app.get("/api/connections/{connection_id}", response_model=ConnectionResponse)
+async def get_connection(
+    connection_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    获取单个连接详情
+    """
+    try:
+        connection = db.query(Connection).filter(Connection.id == connection_id).first()
+        if not connection:
+            raise HTTPException(status_code=404, detail="连接不存在")
+        
+        response = ConnectionResponse(
+            id=connection.id,
+            source_device_id=connection.source_device_id,
+            target_device_id=connection.target_device_id,
+            source_device_name=connection.source_device.name,
+            target_device_name=connection.target_device.name,
+            connection_type=connection.connection_type,
+            cable_model=connection.cable_model,
+            source_fuse_number=connection.source_fuse_number,
+            source_fuse_spec=connection.source_fuse_spec,
+            source_breaker_number=connection.source_breaker_number,
+            source_breaker_spec=connection.source_breaker_spec,
+            target_fuse_number=connection.target_fuse_number,
+            target_fuse_spec=connection.target_fuse_spec,
+            target_breaker_number=connection.target_breaker_number,
+            target_breaker_spec=connection.target_breaker_spec,
+            hierarchy_relation=connection.hierarchy_relation,
+            upstream_downstream=connection.upstream_downstream,
+            parallel_count=connection.parallel_count,
+            rated_current=connection.rated_current,
+            cable_length=connection.cable_length,
+            source_device_photo=connection.source_device_photo,
+            target_device_photo=connection.target_device_photo,
+            remark=connection.remark,
+            installation_date=connection.installation_date,
+            created_at=connection.created_at,
+            updated_at=connection.updated_at
+        )
+        
+        return JSONResponse(content={
+            "success": True,
+            "data": response.dict()
+        })
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"获取连接详情失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取连接详情失败: {str(e)}")
+
+# --- 应用启动 ---
+if __name__ == "__main__":
+    import uvicorn
+    print(f"\n🌐 服务器启动地址: http://localhost:{PORT}")
+    print(f"📊 管理界面: http://localhost:{PORT}")
+    print(f"🔗 连接管理: http://localhost:{PORT}/connections")
+    print(f"⚙️  生命周期管理: http://localhost:{PORT}/lifecycle-management")
+    print("=" * 60)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, reload=False)

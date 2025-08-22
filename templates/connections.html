@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>连接管理 - 安吉电信动力设备管理系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .connection-type-cable {
+            background-color: #e3f2fd;
+            color: #0d47a1;
+        }
+        .connection-type-busbar {
+            background-color: #fff3e0;
+            color: #e65100;
+        }
+        .connection-type-bus {
+            background-color: #f3e5f5;
+            color: #4a148c;
+        }
+        .text-purple {
+            color: #9c27b0 !important;
+        }
+        .status-badge {
+            font-size: 0.8em;
+            padding: 0.25em 0.5em;
+            border-radius: 0.25rem;
+        }
+        .statistics-card {
+            border-left: 4px solid #007bff;
+            transition: all 0.3s ease;
+        }
+        .statistics-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .statistics-card.cable {
+            border-left-color: #2196f3;
+        }
+        .statistics-card.busbar {
+            border-left-color: #ff9800;
+        }
+        .statistics-card.bus {
+            border-left-color: #9c27b0;
+        }
+        .nav-tabs .nav-link.active {
+            background-color: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+        .table-responsive {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        /* 固定表头样式 */
+        .table-responsive table {
+            position: relative;
+        }
+        
+        .table-responsive thead th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background-color: #4a69bd !important; /* 使用统一的蓝色背景 */
+            border-bottom: 2px solid #dee2e6;
+        }
+        
+        /* 确保表头固定样式优先级 */
+        .table-responsive .table thead th {
+            position: sticky !important;
+            top: 0 !important;
+            z-index: 10 !important;
+            background-color: #4a69bd !important;
+        }
+        
+        /* 表格样式 */
+        .table {
+            margin-bottom: 0;
+            table-layout: fixed;
+        }
+        
+        /* 表头样式 - 参考设备管理页面 */
+        .table thead th {
+            background-color: #4a69bd !important;
+            color: #ffffff !important;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            position: relative;
+            border-color: #4a69bd !important;
+            padding: 12px 15px;
+        }
+        
+        /* 表头分隔线 */
+        thead th:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: 20%;
+            height: 60%;
+            width: 1px;
+            background-color: rgba(255, 255, 255, 0.3);
+        }
+        
+        /* 特定列的对齐方式和宽度优化 */
+        th:nth-child(1), td:nth-child(1) { /* 连接ID */
+            text-align: center;
+            width: 80px;
+        }
+        th:nth-child(2), td:nth-child(2) { /* A端设备 */
+            text-align: left;
+            width: 150px;
+        }
+        th:nth-child(3), td:nth-child(3) { /* A端端口 */
+            text-align: center;
+            width: 100px;
+        }
+        th:nth-child(4), td:nth-child(4) { /* A端额定电流 */
+            text-align: right;
+            font-family: 'Courier New', monospace;
+            width: 120px;
+        }
+        th:nth-child(5), td:nth-child(5) { /* B端设备 */
+            text-align: left;
+            width: 150px;
+        }
+        th:nth-child(6), td:nth-child(6) { /* B端端口 */
+            text-align: center;
+            width: 100px;
+        }
+        th:nth-child(7), td:nth-child(7) { /* B端额定电流 */
+            text-align: right;
+            font-family: 'Courier New', monospace;
+            width: 120px;
+        }
+        th:nth-child(8), td:nth-child(8) { /* 连接类型 */
+            text-align: center;
+            width: 100px;
+        }
+        th:nth-child(9), td:nth-child(9) { /* 规格型号 */
+            text-align: left;
+            width: 120px;
+        }
+        th:nth-child(10), td:nth-child(10) { /* 备注 */
+            text-align: left;
+            width: 150px;
+        }
+        th:nth-child(11), td:nth-child(11) { /* 操作 */
+            text-align: center;
+            width: 180px;
+            min-width: 180px;
+        }
+        
+        .table td {
+            vertical-align: middle;
+            padding: 12px 15px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        /* 数字列的特殊样式 */
+        td:nth-child(4), td:nth-child(7) { /* 额定电流列 */
+            font-weight: 500;
+        }
+        
+        tbody tr:nth-of-type(even) {
+            background-color: #e9ecef;
+            color: #333333;
+        }
+        tbody tr:hover {
+            background-color: #007bff;
+            color: #ffffff;
+        }
+        .connection-diagram {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            padding: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="/">
+            <i class="fas fa-bolt"></i> 安吉电信动力设备管理系统
+            </a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="/">设备管理</a>
+                <a class="nav-link active" href="/connections">连接管理</a>
+                <a class="nav-link" href="/lifecycle-management">生命周期管理</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <div class="row">
+            <div class="col-12">
+                <h2><i class="fas fa-project-diagram"></i> 设备连接管理</h2>
+                <p class="text-muted">管理动力设备间的供电连接关系</p>
+            </div>
+        </div>
+
+        <!-- 统计信息卡片 -->
+        <div class="row mb-4" id="statisticsCards">
+            <!-- 统计卡片将通过JavaScript动态生成 -->
+        </div>
+
+        <!-- 标签页导航 -->
+        <ul class="nav nav-tabs" id="connectionTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="list-tab" data-bs-toggle="tab" data-bs-target="#list" type="button" role="tab">
+                    <i class="fas fa-list"></i> 连接列表
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="topology-tab" data-bs-toggle="tab" data-bs-target="#topology" type="button" role="tab">
+                    <i class="fas fa-sitemap"></i> 拓扑图
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="statistics-tab" data-bs-toggle="tab" data-bs-target="#statistics" type="button" role="tab">
+                    <i class="fas fa-chart-bar"></i> 统计分析
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content" id="connectionTabsContent">
+            <!-- 连接列表标签页 -->
+            <div class="tab-pane fade show active" id="list" role="tabpanel">
+                <div class="card mt-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-list"></i> 连接关系列表</h5>
+                        <button class="btn btn-primary btn-sm" onclick="showAddConnectionModal()">
+                            <i class="fas fa-plus"></i> 添加连接
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <!-- 筛选条件 -->
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <label for="connectionTypeFilter" class="form-label">连接类型：</label>
+                                <select class="form-select" id="connectionTypeFilter" onchange="loadConnections()">
+                                    <option value="all">全部类型</option>
+                                    <option value="电缆">电缆</option>
+                                    <option value="铜排">铜排</option>
+                                    <option value="母线">母线</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="deviceNameFilter" class="form-label">设备名称：</label>
+                                <input type="text" class="form-control" id="deviceNameFilter" placeholder="输入设备名称（查找该设备的所有连接关系）" onblur="loadConnections()" onkeypress="if(event.key==='Enter') loadConnections()">
+                            </div>
+                            <div class="col-md-3 d-flex align-items-end">
+                                <button class="btn btn-outline-success me-2" onclick="loadConnections()">
+                                    <i class="fas fa-sync-alt"></i> 刷新
+                                </button>
+                                <button class="btn btn-outline-secondary" onclick="clearFilters()">
+                                    <i class="fas fa-times"></i> 清除
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover" id="connectionsTable">
+                                <thead class="table-dark">
+                                    <tr>
+                                        <th>连接ID</th>
+                                        <th>A端设备</th>
+                                        <th>A端端口</th>
+                                        <th>A端额定电流</th>
+                                        <th>B端设备</th>
+                                        <th>B端端口</th>
+                                        <th>B端额定电流</th>
+                                        <th>连接类型</th>
+                                        <th>规格型号</th>
+                                        <th>备注</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- 连接数据将通过JavaScript动态加载 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 拓扑图标签页 -->
+            <div class="tab-pane fade" id="topology" role="tabpanel">
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-sitemap"></i> 连接拓扑图</h5>
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <label for="topologyFilter" class="form-label">显示设备：</label>
+                                <select class="form-select" id="topologyFilter" onchange="loadTopology()">
+                                    <option value="all">全部设备</option>
+                                    <option value="ups">UPS设备</option>
+                                    <option value="battery">电池组</option>
+                                    <option value="distribution">配电设备</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <button class="btn btn-outline-primary" onclick="loadTopology()">
+                                    <i class="fas fa-sync-alt"></i> 刷新图表
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="topologyContainer" class="connection-diagram" style="height: 500px;">
+                            <p class="text-muted">拓扑图加载中...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 统计分析标签页 -->
+            <div class="tab-pane fade" id="statistics" role="tabpanel">
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-chart-bar"></i> 连接统计分析</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <canvas id="connectionTypeChart" width="400" height="200"></canvas>
+                            </div>
+                            <div class="col-md-6">
+                                <canvas id="deviceConnectionChart" width="400" height="200"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑连接模态框 -->
+    <div class="modal fade" id="connectionModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="connectionModalTitle">添加连接关系</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="connectionForm">
+                    <div class="modal-body">
+                        <input type="hidden" id="connectionId" name="connectionId">
+                        
+                        <!-- A端设备信息 -->
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <h6 class="text-primary"><i class="fas fa-plug"></i> A端设备信息</h6>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="deviceAId" class="form-label">A端设备 <span class="text-danger">*</span></label>
+                                <select class="form-select" id="deviceAId" name="source_device_id" required>
+                                    <option value="">请选择设备</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="portA" class="form-label">A端端口</label>
+                                <input type="text" class="form-control" id="portA" name="source_port" placeholder="如：输出端口1">
+                            </div>
+                        </div>
+
+                        <!-- B端设备信息 -->
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <h6 class="text-primary"><i class="fas fa-plug"></i> B端设备信息</h6>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="deviceBId" class="form-label">B端设备 <span class="text-danger">*</span></label>
+                                <select class="form-select" id="deviceBId" name="target_device_id" required>
+                                    <option value="">请选择设备</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="portB" class="form-label">B端端口</label>
+                                <input type="text" class="form-control" id="portB" name="target_port" placeholder="如：输入端口1">
+                            </div>
+                        </div>
+
+                        <!-- 连接信息 -->
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <h6 class="text-primary"><i class="fas fa-link"></i> 连接信息</h6>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="connectionType" class="form-label">连接类型 <span class="text-danger">*</span></label>
+                                <select class="form-select" id="connectionType" name="connection_type" required onchange="toggleSpecificationFields()">
+                                    <option value="">请选择类型</option>
+                                    <option value="电缆">电缆</option>
+                                    <option value="铜排">铜排</option>
+                                    <option value="母线">母线</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="parallelCount" class="form-label">并联数量</label>
+                                <input type="number" class="form-control" id="parallelCount" name="parallel_count" min="1" value="1">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="ratedCurrent" class="form-label">额定电流(A)</label>
+                                <input type="number" class="form-control" id="ratedCurrent" name="rated_current" step="0.1">
+                            </div>
+                        </div>
+
+                        <!-- 技术参数 -->
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <h6 class="text-primary"><i class="fas fa-cog"></i> 技术参数</h6>
+                            </div>
+                            <div class="col-md-6" id="cableSpecGroup" style="display: none;">
+                                <label for="cableSpecification" class="form-label">电缆规格</label>
+                                <input type="text" class="form-control" id="cableSpecification" name="cable_model" placeholder="如：YJV-4×120+1×70">
+                            </div>
+                            <div class="col-md-6" id="busbarSpecGroup" style="display: none;">
+                                <label for="busbarSpecification" class="form-label">铜排规格</label>
+                                <input type="text" class="form-control" id="busbarSpecification" name="cable_model" placeholder="如：TMY-100×10">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="length" class="form-label">长度(m)</label>
+                                <input type="number" class="form-control" id="length" name="cable_length" step="0.1">
+                            </div>
+                        </div>
+
+                        <!-- 附加信息 -->
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <h6 class="text-primary"><i class="fas fa-info-circle"></i> 附加信息</h6>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="installationDate" class="form-label">安装日期</label>
+                                <input type="text" class="form-control" id="installationDate" name="installation_date" placeholder="请输入YYYYMM格式，如：202412" pattern="[0-9]{6}" maxlength="6">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="adminPassword" class="form-label">管理员密码 <span class="text-danger">*</span></label>
+                                <input type="password" class="form-control" id="adminPassword" name="password" required placeholder="请输入管理员密码">
+                            </div>
+                            <div class="col-12 mt-2">
+                                <label for="notes" class="form-label">备注</label>
+                                <textarea class="form-control" id="notes" name="remark" rows="2" placeholder="连接相关的备注信息"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary">保存</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <script>
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStatistics();
+            loadConnections();
+            loadDeviceOptions();
+        });
+
+        // 加载统计信息
+        async function loadStatistics() {
+            try {
+                const response = await fetch('/api/connections/statistics');
+                if (response.ok) {
+                    const stats = await response.json();
+                    displayStatistics(stats);
+                }
+            } catch (error) {
+                console.error('加载统计信息失败:', error);
+            }
+        }
+
+        // 显示统计信息卡片
+        function displayStatistics(stats) {
+            // API返回的数据在stats.data中
+            const data = stats.data || stats;
+            const container = document.getElementById('statisticsCards');
+            container.innerHTML = `
+                <div class="col-md-3">
+                    <div class="card statistics-card">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h6 class="card-title text-muted">总连接数</h6>
+                                    <h3 class="text-primary">${data.total || 0}</h3>
+                                </div>
+                                <div class="align-self-center">
+                                    <i class="fas fa-project-diagram fa-2x text-primary"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card statistics-card cable">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h6 class="card-title text-muted">电缆连接</h6>
+                                    <h3 class="text-info">${data.cable || 0}</h3>
+                                </div>
+                                <div class="align-self-center">
+                                    <i class="fas fa-plug fa-2x text-info"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card statistics-card busbar">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h6 class="card-title text-muted">铜排连接</h6>
+                                    <h3 class="text-warning">${data.busbar || 0}</h3>
+                                </div>
+                                <div class="align-self-center">
+                                    <i class="fas fa-minus fa-2x text-warning"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card statistics-card bus">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between">
+                                <div>
+                                    <h6 class="card-title text-muted">母线连接</h6>
+                                    <h3 class="text-purple">${data.bus || 0}</h3>
+                                </div>
+                                <div class="align-self-center">
+                                    <i class="fas fa-grip-lines fa-2x text-purple"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // 获取数据库中对应的连接类型值（支持中英文混合查询）
+        function getDatabaseConnectionTypes(displayType) {
+            const typeMap = {
+                '电缆': ['cable', '电缆'],
+                '铜排': ['busbar', '铜排'],
+                '母线': ['bus', 'busway', '母线']
+            };
+            return typeMap[displayType] || [displayType];
+        }
+
+        // 加载连接列表
+        async function loadConnections() {
+            try {
+                const typeFilter = document.getElementById('connectionTypeFilter').value;
+                const deviceNameFilter = document.getElementById('deviceNameFilter').value;
+                
+                let url = '/api/connections?page_size=100'; // 增加页面大小以获取更多数据
+                const params = new URLSearchParams();
+                
+                // 如果有类型筛选，我们需要在前端进行筛选，因为数据库中有混合的中英文值
+                if (deviceNameFilter) params.append('device_name', deviceNameFilter);
+                
+                if (params.toString()) {
+                    url += '&' + params.toString();
+                }
+                
+                const response = await fetch(url);
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success && result.data) {
+                        let filteredData = result.data;
+                        
+                        // 在前端进行连接类型筛选
+                        if (typeFilter !== 'all') {
+                            const allowedTypes = getDatabaseConnectionTypes(typeFilter);
+                            filteredData = result.data.filter(conn => 
+                                allowedTypes.includes(conn.connection_type)
+                            );
+                        }
+                        
+                        displayConnections(filteredData);
+                        updatePagination(result.pagination);
+                    } else {
+                        console.error('API返回格式错误:', result);
+                    }
+                }
+            } catch (error) {
+                console.error('加载连接列表失败:', error);
+            }
+        }
+
+        // 连接类型映射函数
+        function getConnectionTypeDisplay(type) {
+            const typeMap = {
+                'cable': '电缆',
+                'busbar': '铜排',
+                'bus': '母线',
+                'busway': '母线',
+                '电缆': '电缆',
+                '铜排': '铜排',
+                '母线': '母线'
+            };
+            return typeMap[type] || type || 'N/A';
+        }
+
+        // 从规格字符串中提取额定电流（阿拉伯数字）
+        function extractRatingFromSpec(spec) {
+            if (!spec) return '-';
+            
+            // 使用正则表达式提取数字（支持整数和小数）
+            const match = spec.match(/\d+(\.\d+)?/);
+            if (match) {
+                return match[0] + 'A';
+            }
+            return '-';
+        }
+
+        // 显示连接列表
+        function displayConnections(connections) {
+            const tbody = document.querySelector('#connectionsTable tbody');
+            tbody.innerHTML = '';
+            
+            connections.forEach(conn => {
+                const displayType = getConnectionTypeDisplay(conn.connection_type);
+                // 修复连接类型CSS类名映射
+                const typeClassMap = {
+                    '电缆': 'cable',
+                    '铜排': 'busbar', 
+                    '母线': 'bus',
+                    'cable': 'cable',
+                    'busbar': 'busbar',
+                    'bus': 'bus'
+                };
+                const typeClass = typeClassMap[conn.connection_type] || 'unknown';
+                
+                const row = document.createElement('tr');
+                // 处理备注显示，如果备注过长则截断并添加省略号
+                const remarkText = conn.remark || '-';
+                const displayRemark = remarkText.length > 20 ? remarkText.substring(0, 20) + '...' : remarkText;
+                
+                // 提取A端额定电流（从熔丝或空开规格中提取数字）
+                const sourceRating = extractRatingFromSpec(conn.source_fuse_spec || conn.source_breaker_spec);
+                // 提取B端额定电流（从熔丝或空开规格中提取数字）
+                const targetRating = extractRatingFromSpec(conn.target_fuse_spec || conn.target_breaker_spec);
+                
+                row.innerHTML = `
+                    <td>${conn.id}</td>
+                    <td>${conn.source_device_name || 'N/A'}</td>
+                    <td>${conn.source_fuse_number || conn.source_breaker_number || '-'}</td>
+                    <td>${sourceRating}</td>
+                    <td>${conn.target_device_name || 'N/A'}</td>
+                    <td>${conn.target_fuse_number || conn.target_breaker_number || '-'}</td>
+                    <td>${targetRating}</td>
+                    <td><span class="badge status-badge connection-type-${typeClass}">${displayType}</span></td>
+                    <td>${conn.cable_model || '-'}</td>
+                    <td title="${remarkText}">${displayRemark}</td>
+                    <td>
+                        <div class="d-flex gap-1 flex-wrap justify-content-center">
+                            <button class="btn btn-warning btn-sm text-dark" onclick="editConnection(${conn.id})" title="编辑连接">
+                                <i class="fas fa-edit"></i> 编辑
+                            </button>
+                            <button class="btn btn-danger btn-sm text-white" onclick="deleteConnection(${conn.id})" title="删除连接">
+                                <i class="fas fa-trash"></i> 删除
+                            </button>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // 加载设备选项
+        async function loadDeviceOptions() {
+            try {
+                const response = await fetch('/api/devices');
+                if (response.ok) {
+                    const result = await response.json();
+                    const devices = result.success && result.data ? result.data : result;
+                    const deviceASelect = document.getElementById('deviceAId');
+                    const deviceBSelect = document.getElementById('deviceBId');
+                    
+                    devices.forEach(device => {
+                        const optionA = new Option(`${device.asset_id} - ${device.name}`, device.id);
+                        const optionB = new Option(`${device.asset_id} - ${device.name}`, device.id);
+                        deviceASelect.add(optionA);
+                        deviceBSelect.add(optionB);
+                    });
+                }
+            } catch (error) {
+                console.error('加载设备选项失败:', error);
+            }
+        }
+
+        // 显示添加连接模态框
+        function showAddConnectionModal() {
+            document.getElementById('connectionModalTitle').textContent = '添加连接关系';
+            document.getElementById('connectionForm').reset();
+            document.getElementById('connectionId').value = '';
+            new bootstrap.Modal(document.getElementById('connectionModal')).show();
+        }
+
+        // 编辑连接
+        async function editConnection(id) {
+            try {
+                const response = await fetch(`/api/connections/${id}`);
+                if (response.ok) {
+                    const connection = await response.json();
+                    
+                    // 将数据库中的连接类型转换为表单中的中文显示值
+                    const displayType = getConnectionTypeDisplay(connection.connection_type);
+                    
+                    document.getElementById('connectionModalTitle').textContent = '编辑连接关系';
+                    document.getElementById('connectionId').value = connection.id;
+                    document.getElementById('deviceAId').value = connection.source_device_id;
+                    document.getElementById('portA').value = connection.source_port || '';
+                    document.getElementById('deviceBId').value = connection.target_device_id;
+                    document.getElementById('portB').value = connection.target_port || '';
+                    document.getElementById('connectionType').value = displayType;
+                    document.getElementById('parallelCount').value = connection.parallel_count || 1;
+                    document.getElementById('ratedCurrent').value = connection.rated_current || '';
+                    document.getElementById('cableSpecification').value = connection.cable_model || '';
+                    document.getElementById('busbarSpecification').value = connection.cable_model || '';
+                    document.getElementById('length').value = connection.cable_length || '';
+                    document.getElementById('installationDate').value = connection.installation_date || '';
+                    document.getElementById('adminPassword').value = '';
+                    document.getElementById('notes').value = connection.remark || '';
+                    
+                    toggleSpecificationFields();
+                    new bootstrap.Modal(document.getElementById('connectionModal')).show();
+                }
+            } catch (error) {
+                console.error('加载连接信息失败:', error);
+            }
+        }
+
+        // 删除连接
+        async function deleteConnection(id) {
+            if (confirm('确定要删除这个连接关系吗？')) {
+                try {
+                    const response = await fetch(`/api/connections/${id}`, {
+                        method: 'DELETE'
+                    });
+                    if (response.ok) {
+                        loadConnections();
+                        loadStatistics();
+                    }
+                } catch (error) {
+                    console.error('删除连接失败:', error);
+                }
+            }
+        }
+
+        // 切换规格字段显示
+        function toggleSpecificationFields() {
+            const connectionType = document.getElementById('connectionType').value;
+            const cableGroup = document.getElementById('cableSpecGroup');
+            const busbarGroup = document.getElementById('busbarSpecGroup');
+            
+            cableGroup.style.display = connectionType === '电缆' ? 'block' : 'none';
+            busbarGroup.style.display = connectionType === '铜排' ? 'block' : 'none';
+        }
+
+        // 清除筛选条件
+        function clearFilters() {
+            document.getElementById('connectionTypeFilter').value = 'all';
+            document.getElementById('deviceNameFilter').value = '';
+            loadConnections();
+        }
+
+        // 表单提交处理
+        document.getElementById('connectionForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const originalFormData = new FormData(this);
+            const data = Object.fromEntries(originalFormData.entries());
+            
+            const isEdit = data.connectionId;
+            const url = isEdit ? `/api/connections/${data.connectionId}` : '/api/connections';
+            const method = isEdit ? 'PUT' : 'POST';
+            
+            try {
+                let requestBody, headers;
+                if (method === 'POST') {
+                    // 创建连接时使用FormData格式，直接使用原始FormData
+                    // 移除connectionId字段（如果存在）
+                    if (originalFormData.has('connectionId')) {
+                        originalFormData.delete('connectionId');
+                    }
+                    requestBody = originalFormData;
+                    headers = {}; // 让浏览器自动设置Content-Type
+                } else {
+                    // 更新连接时使用JSON格式
+                    delete data.password; // 更新时不需要密码
+                    delete data.connectionId;
+                    requestBody = JSON.stringify(data);
+                    headers = {'Content-Type': 'application/json'};
+                }
+                
+                const response = await fetch(url, {
+                    method: method,
+                    headers: headers,
+                    body: requestBody
+                });
+                
+                if (response.ok) {
+                    bootstrap.Modal.getInstance(document.getElementById('connectionModal')).hide();
+                    loadConnections();
+                    loadStatistics();
+                    alert('保存成功！');
+                } else {
+                    const error = await response.json();
+                    alert('保存失败: ' + (error.detail || '未知错误'));
+                }
+            } catch (error) {
+                console.error('保存连接失败:', error);
+                alert('保存失败: ' + error.message);
+            }
+        });
+
+        // 更新分页信息
+        function updatePagination(pagination) {
+            // 这里可以添加分页控件的更新逻辑
+            // 目前暂时不实现分页UI，只是为了避免JavaScript错误
+            console.log('分页信息:', pagination);
+        }
+
+        // 加载拓扑图（占位符功能）
+        function loadTopology() {
+            const container = document.getElementById('topologyContainer');
+            container.innerHTML = '<p class="text-muted">拓扑图功能开发中，敬请期待...</p>';
+        }
+    </script>
+</body>
+</html>
