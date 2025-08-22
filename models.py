@@ -1,6 +1,7 @@
 # 导入 SQLAlchemy 所需的模块
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, DateTime, Date, Float, Text
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base
+from datetime import datetime
 import os
 
 # 导入配置
@@ -98,16 +99,53 @@ class Connection(Base):
     """
     连接模型 (Connection Model)
     对应数据库中的 'connections' 表。
+    扩展支持Excel中的18个字段，完整记录设备连接关系信息。
     """
     __tablename__ = "connections"
-
+    
+    # 基础字段
     id = Column(Integer, primary_key=True, index=True)
-    source_device_id = Column(Integer, ForeignKey("devices.id"))
-    source_port = Column(String)
-    target_device_id = Column(Integer, ForeignKey("devices.id"))
-    target_port = Column(String)
-    cable_type = Column(String)
-
+    source_device_id = Column(Integer, ForeignKey("devices.id"), nullable=False)
+    target_device_id = Column(Integer, ForeignKey("devices.id"), nullable=False)
+    
+    # A端（源端）信息 - 对应Excel字段2-5
+    source_port = Column(String(100))  # A端端口（保留原有字段）
+    source_fuse_number = Column(String(50))  # A端熔丝编号
+    source_fuse_spec = Column(String(100))  # A端熔丝规格
+    source_breaker_number = Column(String(50))  # A端空开编号
+    source_breaker_spec = Column(String(100))  # A端空开规格
+    
+    # B端（目标端）信息 - 对应Excel字段11-15
+    target_port = Column(String(100))  # B端端口（保留原有字段）
+    target_fuse_number = Column(String(50))  # B端熔丝编号
+    target_fuse_spec = Column(String(100))  # B端熔丝规格
+    target_breaker_number = Column(String(50))  # B端空开编号
+    target_breaker_spec = Column(String(100))  # B端空开规格（对应Excel字段14）
+    target_device_location = Column(String(200))  # B端设备位置（非动力设备）
+    
+    # 连接信息 - 对应Excel字段6-9
+    hierarchy_relation = Column(String(20))  # 上下级关系（如：A上B下）
+    upstream_downstream = Column(String(20))  # 上下游关系（如：上游、下游）
+    connection_type = Column(String(20), nullable=False, default='cable')  # 连接类型：cable/busbar/busway
+    cable_model = Column(String(100))  # 电缆型号
+    cable_type = Column(String(100))  # 保留原有字段，向后兼容
+    
+    # 技术参数（从电缆型号和规格推导）
+    cable_specification = Column(String(100))  # 电缆规格（如：RVVZ-240mm²）
+    parallel_count = Column(Integer, default=1)  # 并联数量（从备注解析）
+    rated_current = Column(Float)  # 额定电流(A)（从熔丝/空开规格推导）
+    cable_length = Column(Float)  # 电缆长度(m)
+    
+    # 附加信息 - 对应Excel字段16-18
+    source_device_photo = Column(String(500))  # A端设备照片路径
+    target_device_photo = Column(String(500))  # B端设备照片路径
+    remark = Column(Text)  # 备注
+    
+    # 系统字段
+    installation_date = Column(Date)  # 安装日期
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
     # 定义与 Device 模型的关系
     # 'source_device' 属性将引用源设备对象。
     source_device = relationship(
