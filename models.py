@@ -126,7 +126,7 @@ class Connection(Base):
     # 连接信息 - 对应Excel字段6-9
     hierarchy_relation = Column(String(20))  # 上下级关系（如：A上B下）
     upstream_downstream = Column(String(20))  # 上下游关系（如：上游、下游）
-    connection_type = Column(String(20), nullable=False, default='cable')  # 连接类型：cable/busbar/busway
+    connection_type = Column(String(20), nullable=True, default=None)  # 连接类型：cable/busbar/busway，空值表示空闲端口
     cable_model = Column(String(100))  # 电缆型号
     cable_type = Column(String(100))  # 保留原有字段，向后兼容
     

@@ -1,34 +1,55 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from models import *
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+import sqlite3
 
-# 创建数据库连接
-engine = create_engine('sqlite:///asset_management.db')
-Session = sessionmaker(bind=engine)
-db = Session()
-
-try:
-    # 检查连接数量
-    connection_count = db.query(Connection).count()
-    print(f'数据库中连接数量: {connection_count}')
+def check_connections():
+    # 直接使用SQLite查询避免ORM问题
+    conn = sqlite3.connect('database/asset.db')
+    cursor = conn.cursor()
     
-    if connection_count > 0:
-        # 显示前3个连接
-        connections = db.query(Connection).limit(3).all()
-        print('\n前3个连接:')
-        for c in connections:
-            connection_type = getattr(c, 'connection_type', '未知')
-            cable_model = getattr(c, 'cable_model', '未知')
-            print(f'ID: {c.id}, 源设备ID: {c.source_device_id}, 目标设备ID: {c.target_device_id}, 连接类型: {connection_type}, 电缆型号: {cable_model}')
-    else:
-        print('数据库中没有连接数据')
+    try:
+        # 查询连接表的基本信息
+        cursor.execute("SELECT COUNT(*) FROM connections")
+        total_count = cursor.fetchone()[0]
+        print(f'总连接数: {total_count}')
         
-    # 检查设备数量
-    device_count = db.query(Device).count()
-    print(f'\n数据库中设备数量: {device_count}')
-    
-finally:
-    db.close()
+        # 查询前20条记录
+        cursor.execute("""
+            SELECT id, source_device_id, target_device_id, connection_type, 
+                   source_fuse_number, source_breaker_number
+            FROM connections 
+            LIMIT 20
+        """)
+        
+        print('\n前20条连接记录的详细信息:')
+        for i, row in enumerate(cursor.fetchall()):
+            conn_id, source_id, target_id, conn_type, fuse_num, breaker_num = row
+            port = fuse_num or breaker_num
+            print(f'{i+1}. ID:{conn_id}, A端设备:{source_id}, B端设备:{target_id}, 连接类型:{conn_type}, A端端口:{port}')
+        
+        # 查找所有连接类型为'cable'的记录
+        cursor.execute("""
+            SELECT id, source_device_id, target_device_id, connection_type
+            FROM connections 
+            WHERE connection_type = 'cable'
+        """)
+        
+        cable_connections = cursor.fetchall()
+        print(f'\n连接类型为cable的记录数: {len(cable_connections)}')
+        
+        # 查看设备表中的设备数量
+        cursor.execute("SELECT COUNT(*) FROM devices")
+        device_count = cursor.fetchone()[0]
+        print(f'设备总数: {device_count}')
+        
+        # 查看设备ID的范围
+        cursor.execute("SELECT MIN(id), MAX(id) FROM devices")
+        min_id, max_id = cursor.fetchone()
+        print(f'设备ID范围: {min_id} - {max_id}')
+        
+    finally:
+        conn.close()
+
+if __name__ == '__main__':
+    check_connections()

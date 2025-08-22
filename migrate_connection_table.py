@@ -115,7 +115,7 @@ def migrate_connection_table():
         # 连接信息字段
         add_column_if_not_exists(cursor, 'connections', 'hierarchy_relation', 'VARCHAR(20)')
         add_column_if_not_exists(cursor, 'connections', 'upstream_downstream', 'VARCHAR(20)')
-        add_column_if_not_exists(cursor, 'connections', 'connection_type', 'VARCHAR(20)', "'cable'")
+        add_column_if_not_exists(cursor, 'connections', 'connection_type', 'VARCHAR(20)')
         add_column_if_not_exists(cursor, 'connections', 'cable_model', 'VARCHAR(100)')
         
         # 技术参数字段

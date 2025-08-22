@@ -19,6 +19,10 @@
             background-color: #f3e5f5;
             color: #4a148c;
         }
+        .connection-type-idle {
+            background-color: #f5f5f5;
+            color: #757575;
+        }
         .text-purple {
             color: #9c27b0 !important;
         }
@@ -30,10 +34,16 @@
         .statistics-card {
             border-left: 4px solid #007bff;
             transition: all 0.3s ease;
+            cursor: pointer;
         }
         .statistics-card:hover {
             transform: translateY(-2px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            background-color: #f8f9fa;
+        }
+        .statistics-card:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .statistics-card.cable {
             border-left-color: #2196f3;
@@ -260,7 +270,12 @@
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="statistics-tab" data-bs-toggle="tab" data-bs-target="#statistics" type="button" role="tab">
-                    <i class="fas fa-chart-bar"></i> 统计分析
+                    <i class="fas fa-chart-bar"></i> 连接统计
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="port-statistics-tab" data-bs-toggle="tab" data-bs-target="#port-statistics" type="button" role="tab">
+                    <i class="fas fa-plug"></i> 端口统计
                 </button>
             </li>
         </ul>
@@ -285,6 +300,7 @@
                                     <option value="电缆">电缆</option>
                                     <option value="铜排">铜排</option>
                                     <option value="母线">母线</option>
+                                    <option value="空闲">空闲</option>
                                 </select>
                             </div>
                             <div class="col-md-6">
@@ -357,7 +373,7 @@
                 </div>
             </div>
 
-            <!-- 统计分析标签页 -->
+            <!-- 连接统计标签页 -->
             <div class="tab-pane fade" id="statistics" role="tabpanel">
                 <div class="card mt-3">
                     <div class="card-header">
@@ -370,6 +386,120 @@
                             </div>
                             <div class="col-md-6">
                                 <canvas id="deviceConnectionChart" width="400" height="200"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 端口统计标签页 -->
+            <div class="tab-pane fade" id="port-statistics" role="tabpanel">
+                <div class="card mt-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-plug"></i> 端口统计分析</h5>
+                        <div>
+                            <button class="btn btn-outline-primary btn-sm me-2" onclick="refreshPortStatistics()">
+                                <i class="fas fa-sync-alt"></i> 刷新
+                            </button>
+                            <button class="btn btn-outline-success btn-sm" onclick="exportPortStatistics()">
+                                <i class="fas fa-download"></i> 导出
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- 端口统计概览卡片 -->
+                        <div class="row mb-4" id="portOverviewCards">
+                            <!-- 概览卡片将通过JavaScript动态生成 -->
+                        </div>
+
+                        <!-- 端口统计详细信息 -->
+                        <div class="row">
+                            <!-- 端口类型统计图表 -->
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-chart-pie"></i> 端口类型分布</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="portTypeChart" width="400" height="300"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 容量分布统计图表 -->
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-chart-bar"></i> 容量等级分布</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="capacityChart" width="400" height="300"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 容量统计表格 -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-table"></i> 容量统计详情</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-striped table-hover" id="capacityStatsTable">
+                                                <thead class="table-dark">
+                                                    <tr>
+                                                        <th>容量等级</th>
+                                                        <th>熔丝端口数</th>
+                                                        <th>空开端口数</th>
+                                                        <th>总端口数</th>
+                                                        <th>已使用端口</th>
+                                                        <th>空闲端口</th>
+                                                        <th>使用率</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <!-- 容量统计数据将通过JavaScript动态加载 -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 设备端口详情表格 -->
+                        <div class="row">
+                            <div class="col-12">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-server"></i> 设备端口详情</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive" style="max-height: 400px;">
+                                            <table class="table table-striped table-hover" id="devicePortsTable">
+                                                <thead class="table-dark">
+                                                    <tr>
+                                                        <th>设备名称</th>
+                                                        <th>设备类型</th>
+                                                        <th>熔丝端口数</th>
+                                                        <th>空开端口数</th>
+                                                        <th>总端口数</th>
+                                                        <th>已使用端口</th>
+                                                        <th>空闲端口</th>
+                                                        <th>使用率</th>
+                                                        <th>操作</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <!-- 设备端口详情数据将通过JavaScript动态加载 -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -446,6 +576,7 @@
                                     <option value="电缆">电缆</option>
                                     <option value="铜排">铜排</option>
                                     <option value="母线">母线</option>
+                                    <option value="空闲">空闲</option>
                                 </select>
                             </div>
                             <div class="col-md-4">
@@ -538,7 +669,7 @@
             const container = document.getElementById('statisticsCards');
             container.innerHTML = `
                 <div class="col-md-3">
-                    <div class="card statistics-card">
+                    <div class="card statistics-card clickable-card" onclick="filterByConnectionType('')" style="cursor: pointer;" title="点击查看所有连接">
                         <div class="card-body">
                             <div class="d-flex justify-content-between">
                                 <div>
@@ -553,7 +684,7 @@
                     </div>
                 </div>
                 <div class="col-md-3">
-                    <div class="card statistics-card cable">
+                    <div class="card statistics-card cable clickable-card" onclick="filterByConnectionType('电缆')" style="cursor: pointer;" title="点击查看电缆连接">
                         <div class="card-body">
                             <div class="d-flex justify-content-between">
                                 <div>
@@ -568,7 +699,7 @@
                     </div>
                 </div>
                 <div class="col-md-3">
-                    <div class="card statistics-card busbar">
+                    <div class="card statistics-card busbar clickable-card" onclick="filterByConnectionType('铜排')" style="cursor: pointer;" title="点击查看铜排连接">
                         <div class="card-body">
                             <div class="d-flex justify-content-between">
                                 <div>
@@ -583,7 +714,7 @@
                     </div>
                 </div>
                 <div class="col-md-3">
-                    <div class="card statistics-card bus">
+                    <div class="card statistics-card bus clickable-card" onclick="filterByConnectionType('母线')" style="cursor: pointer;" title="点击查看母线连接">
                         <div class="card-body">
                             <div class="d-flex justify-content-between">
                                 <div>
@@ -605,7 +736,8 @@
             const typeMap = {
                 '电缆': ['cable', '电缆'],
                 '铜排': ['busbar', '铜排'],
-                '母线': ['bus', 'busway', '母线']
+                '母线': ['bus', 'busway', '母线'],
+                '空闲': [null, '', 'null', 'None', undefined]
             };
             return typeMap[displayType] || [displayType];
         }
@@ -653,6 +785,11 @@
 
         // 连接类型映射函数
         function getConnectionTypeDisplay(type) {
+            // 如果连接类型为空（null、undefined或空字符串），表示空闲端口
+            if (!type || type === 'null' || type === 'None') {
+                return '空闲';
+            }
+            
             const typeMap = {
                 'cable': '电缆',
                 'busbar': '铜排',
@@ -660,9 +797,10 @@
                 'busway': '母线',
                 '电缆': '电缆',
                 '铜排': '铜排',
-                '母线': '母线'
+                '母线': '母线',
+                '空闲': '空闲'
             };
-            return typeMap[type] || type || 'N/A';
+            return typeMap[type] || type;
         }
 
         // 从规格字符串中提取额定电流（阿拉伯数字）
@@ -689,11 +827,13 @@
                     '电缆': 'cable',
                     '铜排': 'busbar', 
                     '母线': 'bus',
+                    '空闲': 'idle',
                     'cable': 'cable',
                     'busbar': 'busbar',
                     'bus': 'bus'
                 };
-                const typeClass = typeClassMap[conn.connection_type] || 'unknown';
+                // 如果连接类型为空，使用空闲样式
+                const typeClass = typeClassMap[displayType] || ((!conn.connection_type || conn.connection_type === 'null' || conn.connection_type === 'None') ? 'idle' : 'unknown');
                 
                 const row = document.createElement('tr');
                 // 处理备注显示，如果备注过长则截断并添加省略号
@@ -919,6 +1059,331 @@
                 }
             }, 300); // 延迟300ms确保页面滚动完成
         }
+
+        // 端口统计管理类
+        class PortStatisticsManager {
+            constructor() {
+                this.portTypeChart = null;
+                this.capacityChart = null;
+            }
+
+            // 加载端口统计数据
+            async loadPortStatistics() {
+                try {
+                    const response = await fetch('/api/ports/statistics');
+                    if (response.ok) {
+                        const result = await response.json();
+                        if (result.success) {
+                            this.renderPortStatistics(result.data);
+                        } else {
+                            console.error('获取端口统计失败:', result.message);
+                        }
+                    } else {
+                        console.error('API请求失败:', response.status);
+                    }
+                } catch (error) {
+                    console.error('加载端口统计失败:', error);
+                }
+            }
+
+            // 渲染端口统计数据
+            renderPortStatistics(data) {
+                this.updateOverviewCards(data.device_port_summary);
+                this.renderPortTypeChart(data.port_type_statistics);
+                this.renderCapacityChart(data.capacity_statistics);
+                this.updateCapacityTable(data.capacity_statistics);
+                this.updateDevicePortsTable(data.device_port_details);
+            }
+
+            // 更新概览卡片
+            updateOverviewCards(summary) {
+                const container = document.getElementById('portOverviewCards');
+                container.innerHTML = `
+                    <div class="col-md-3">
+                        <div class="card statistics-card">
+                            <div class="card-body text-center">
+                                <h3 class="text-primary">${summary.total_devices}</h3>
+                                <p class="mb-0">设备总数</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card statistics-card">
+                            <div class="card-body text-center">
+                                <h3 class="text-success">${summary.total_ports}</h3>
+                                <p class="mb-0">端口总数</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card statistics-card">
+                            <div class="card-body text-center">
+                                <h3 class="text-warning">${summary.connected_ports}</h3>
+                                <p class="mb-0">已使用端口</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card statistics-card">
+                            <div class="card-body text-center">
+                                <h3 class="text-info">${summary.idle_ports}</h3>
+                                <p class="mb-0">空闲端口</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 渲染端口类型分布图表
+            renderPortTypeChart(typeStats) {
+                const ctx = document.getElementById('portTypeChart').getContext('2d');
+                
+                if (this.portTypeChart) {
+                    this.portTypeChart.destroy();
+                }
+
+                this.portTypeChart = new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: ['熔丝端口', '空开端口'],
+                        datasets: [{
+                            data: [typeStats.fuse_ports, typeStats.breaker_ports],
+                            backgroundColor: ['#ff6384', '#36a2eb'],
+                            borderWidth: 2
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'bottom'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                        const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                        return `${context.label}: ${context.parsed} (${percentage}%)`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 渲染容量分布图表
+            renderCapacityChart(capacityStats) {
+                const ctx = document.getElementById('capacityChart').getContext('2d');
+                
+                if (this.capacityChart) {
+                    this.capacityChart.destroy();
+                }
+
+                const labels = Object.keys(capacityStats);
+                const totalPorts = labels.map(label => capacityStats[label].total_ports);
+                const usedPorts = labels.map(label => capacityStats[label].used_ports);
+
+                this.capacityChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: '总端口数',
+                                data: totalPorts,
+                                backgroundColor: '#36a2eb',
+                                borderWidth: 1
+                            },
+                            {
+                                label: '已使用端口',
+                                data: usedPorts,
+                                backgroundColor: '#ff6384',
+                                borderWidth: 1
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top'
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 更新容量统计表格
+            updateCapacityTable(capacityStats) {
+                const tbody = document.querySelector('#capacityStatsTable tbody');
+                tbody.innerHTML = '';
+
+                Object.keys(capacityStats).forEach(capacity => {
+                    const stats = capacityStats[capacity];
+                    const utilizationRate = stats.total_ports > 0 ? 
+                        ((stats.connected_ports / stats.total_ports) * 100).toFixed(1) : '0.0';
+                    
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${capacity}</td>
+                        <td>${stats.fuse_ports}</td>
+                        <td>${stats.breaker_ports}</td>
+                        <td>${stats.total_ports}</td>
+                        <td>${stats.connected_ports}</td>
+                        <td>${stats.idle_ports}</td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div class="progress flex-grow-1 me-2" style="height: 20px;">
+                                    <div class="progress-bar" role="progressbar" 
+                                         style="width: ${utilizationRate}%" 
+                                         aria-valuenow="${utilizationRate}" 
+                                         aria-valuemin="0" aria-valuemax="100">
+                                    </div>
+                                </div>
+                                <span class="text-nowrap">${utilizationRate}%</span>
+                            </div>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+
+            // 更新设备端口详情表格
+            updateDevicePortsTable(deviceDetails) {
+                const tbody = document.querySelector('#devicePortsTable tbody');
+                tbody.innerHTML = '';
+
+                deviceDetails.forEach(device => {
+                    const utilizationRate = device.total_ports > 0 ? 
+                        ((device.connected_ports / device.total_ports) * 100).toFixed(1) : '0.0';
+                    
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${device.device_name}</td>
+                        <td>${device.device_type || '-'}</td>
+                        <td>${device.fuse_ports}</td>
+                        <td>${device.breaker_ports}</td>
+                        <td>${device.total_ports}</td>
+                        <td>${device.connected_ports}</td>
+                        <td>${device.idle_ports}</td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div class="progress flex-grow-1 me-2" style="height: 20px;">
+                                    <div class="progress-bar" role="progressbar" 
+                                         style="width: ${utilizationRate}%" 
+                                         aria-valuenow="${utilizationRate}" 
+                                         aria-valuemin="0" aria-valuemax="100">
+                                    </div>
+                                </div>
+                                <span class="text-nowrap">${utilizationRate}%</span>
+                            </div>
+                        </td>
+                        <td>
+                            <button class="btn btn-info btn-sm" 
+                                    onclick="viewDevicePortDetails(${device.device_id})" 
+                                    title="查看详情">
+                                <i class="fas fa-eye"></i> 详情
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+        }
+
+        // 创建端口统计管理器实例
+        const portStatsManager = new PortStatisticsManager();
+
+        // 刷新端口统计
+        function refreshPortStatistics() {
+            portStatsManager.loadPortStatistics();
+        }
+
+        // 导出端口统计
+        function exportPortStatistics() {
+            // 这里可以实现导出功能
+            alert('导出功能开发中，敬请期待...');
+        }
+
+        // 根据连接类型筛选连接列表
+        function filterByConnectionType(connectionType) {
+            // 切换到连接列表标签页
+            const connectionListTab = document.querySelector('a[href="#connection-list"]');
+            if (connectionListTab) {
+                const tab = new bootstrap.Tab(connectionListTab);
+                tab.show();
+            }
+            
+            // 设置筛选条件
+            const typeFilter = document.getElementById('connectionTypeFilter');
+            if (typeFilter) {
+                // 映射连接类型到筛选器值（支持中文输入）
+                const typeMapping = {
+                    '': 'all',           // 总连接数
+                    'all': 'all',
+                    '电缆': '电缆',
+                    'cable': '电缆',
+                    '铜排': '铜排',
+                    'busbar': '铜排', 
+                    '母线': '母线',
+                    'bus': '母线'
+                };
+                typeFilter.value = typeMapping[connectionType] || 'all';
+                
+                // 触发筛选
+                loadConnections();
+            }
+        }
+
+        // 查看设备端口详情
+        async function viewDevicePortDetails(deviceId) {
+            try {
+                const response = await fetch(`/api/devices/${deviceId}/ports`);
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success) {
+                        // 显示设备端口详情模态框
+                        showDevicePortDetailsModal(result.data);
+                    } else {
+                        alert('获取设备端口详情失败: ' + result.message);
+                    }
+                } else {
+                    alert('API请求失败');
+                }
+            } catch (error) {
+                console.error('获取设备端口详情失败:', error);
+                alert('获取设备端口详情失败: ' + error.message);
+            }
+        }
+
+        // 显示设备端口详情模态框
+        function showDevicePortDetailsModal(deviceData) {
+            // 这里可以实现设备端口详情模态框
+            alert(`设备: ${deviceData.device_name}\n总端口: ${deviceData.total_ports}\n已使用: ${deviceData.used_ports}\n空闲: ${deviceData.free_ports}`);
+        }
+
+        // 监听标签页切换事件
+        document.addEventListener('DOMContentLoaded', function() {
+            const portStatsTab = document.getElementById('port-statistics-tab');
+            if (portStatsTab) {
+                portStatsTab.addEventListener('shown.bs.tab', function() {
+                    // 当端口统计标签页被激活时，加载数据
+                    portStatsManager.loadPortStatistics();
+                });
+            }
+            
+            // 页面加载完成后，如果端口统计标签页是激活状态，则立即加载数据
+            const portStatsPane = document.getElementById('port-statistics');
+            if (portStatsPane && portStatsPane.classList.contains('active')) {
+                portStatsManager.loadPortStatistics();
+            }
+        });
     </script>
 </body>
 </html>

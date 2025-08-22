@@ -16,12 +16,388 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 from pydantic import BaseModel
+import re
+from sqlalchemy import and_
 
 # 导入配置
 from config import ADMIN_PASSWORD, PORT
 
 # 修正了导入，使用正确的函数名和模型
 from models import SessionLocal, Device, Connection, LifecycleRule, create_db_and_tables
+
+# --- 端口统计服务类 ---
+
+class PortStatisticsService:
+    """端口统计服务类，用于处理设备端口使用情况的统计分析"""
+    
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def get_port_statistics(self) -> dict:
+        """获取全局端口统计信息"""
+        try:
+            # 1. 设备端口总览
+            device_port_summary = self._get_device_port_summary()
+            
+            # 2. 端口类型统计
+            port_type_statistics = self._get_port_type_statistics()
+            
+            # 3. 容量统计
+            capacity_statistics = self._get_capacity_statistics()
+            
+            # 4. 设备端口详情
+            device_port_details = self._get_device_port_details()
+            
+            return {
+                "device_port_summary": device_port_summary,
+                "port_type_statistics": port_type_statistics,
+                "capacity_statistics": capacity_statistics,
+                "device_port_details": device_port_details
+            }
+        except Exception as e:
+            print(f"获取端口统计信息时出错: {e}")
+            raise HTTPException(status_code=500, detail=f"获取端口统计信息失败: {str(e)}")
+    
+    def _get_device_port_summary(self) -> dict:
+        """获取设备端口总览 - 基于A端设备统计"""
+        try:
+            # 统计总设备数
+            total_devices = self.db.query(Device).count()
+            
+            # 使用集合来避免重复计算同一个端口
+            all_ports = set()
+            connected_ports = set()
+            
+            # 获取所有连接记录
+            connections = self.db.query(Connection).all()
+            
+            for conn in connections:
+                # 只统计A端（源端）设备的端口
+                if conn.source_fuse_number and conn.source_device_id:
+                    port_key = f"device_{conn.source_device_id}_fuse_{conn.source_fuse_number}"
+                    all_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_ports.add(port_key)
+                        
+                if conn.source_breaker_number and conn.source_device_id:
+                    port_key = f"device_{conn.source_device_id}_breaker_{conn.source_breaker_number}"
+                    all_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_ports.add(port_key)
+            
+            total_ports = len(all_ports)
+            connected_count = len(connected_ports)
+            idle_ports = total_ports - connected_count
+            utilization_rate = (connected_count / total_ports * 100) if total_ports > 0 else 0
+            
+            return {
+                "total_devices": total_devices,
+                "total_ports": total_ports,
+                "connected_ports": connected_count,
+                "idle_ports": idle_ports,
+                "utilization_rate": round(utilization_rate, 2)
+            }
+        except Exception as e:
+            print(f"获取设备端口总览时出错: {e}")
+            return {
+                "total_devices": 0,
+                "total_ports": 0,
+                "connected_ports": 0,
+                "idle_ports": 0,
+                "utilization_rate": 0
+            }
+    
+    def _get_port_type_statistics(self) -> dict:
+        """获取端口类型统计 - 基于A端设备统计"""
+        try:
+            # 获取所有连接记录
+            connections = self.db.query(Connection).all()
+            
+            # 使用集合来避免重复计算端口
+            fuse_ports = set()
+            breaker_ports = set()
+            connected_fuse_ports = set()
+            connected_breaker_ports = set()
+            
+            for conn in connections:
+                # 只统计A端（源端）设备的端口
+                if conn.source_fuse_number and conn.source_device_id:
+                    port_key = f"{conn.source_device_id}_fuse_{conn.source_fuse_number}"
+                    fuse_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_fuse_ports.add(port_key)
+                
+                if conn.source_breaker_number and conn.source_device_id:
+                    port_key = f"{conn.source_device_id}_breaker_{conn.source_breaker_number}"
+                    breaker_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_breaker_ports.add(port_key)
+            
+            fuse_total = len(fuse_ports)
+            fuse_connected = len(connected_fuse_ports)
+            breaker_total = len(breaker_ports)
+            breaker_connected = len(connected_breaker_ports)
+            
+            return {
+                "fuse_ports": {
+                    "total": fuse_total,
+                    "connected": fuse_connected,
+                    "idle": fuse_total - fuse_connected,
+                    "utilization_rate": round((fuse_connected / fuse_total * 100) if fuse_total > 0 else 0, 2)
+                },
+                "breaker_ports": {
+                    "total": breaker_total,
+                    "connected": breaker_connected,
+                    "idle": breaker_total - breaker_connected,
+                    "utilization_rate": round((breaker_connected / breaker_total * 100) if breaker_total > 0 else 0, 2)
+                }
+            }
+        except Exception as e:
+            print(f"获取端口类型统计时出错: {e}")
+            return {
+                "fuse_ports": {"total": 0, "connected": 0, "idle": 0, "utilization_rate": 0},
+                "breaker_ports": {"total": 0, "connected": 0, "idle": 0, "utilization_rate": 0}
+            }
+    
+    def _get_capacity_statistics(self) -> dict:
+        """获取容量统计"""
+        try:
+            # 获取所有连接的规格信息
+            connections = self.db.query(Connection).all()
+            
+            capacity_stats = {}
+            high_capacity_available = {"630A_above": 0, "400A_above": 0, "250A_above": 0}
+            
+            for conn in connections:
+                # 处理各种规格字段
+                for spec_field in [conn.source_fuse_spec, conn.source_breaker_spec, 
+                                 conn.target_fuse_spec, conn.target_breaker_spec]:
+                    if spec_field:
+                        rating = self._extract_rating_from_spec(spec_field)
+                        if rating and rating != "未知":
+                            if rating not in capacity_stats:
+                                capacity_stats[rating] = {"total": 0, "connected": 0, "idle": 0}
+                            
+                            capacity_stats[rating]["total"] += 1
+                            
+                            # 判断是否已连接
+                            if conn.source_device_id and conn.target_device_id:
+                                capacity_stats[rating]["connected"] += 1
+                            else:
+                                capacity_stats[rating]["idle"] += 1
+                                
+                                # 统计大容量可用端口
+                                try:
+                                    rating_value = int(rating.replace('A', ''))
+                                    if rating_value >= 630:
+                                        high_capacity_available["630A_above"] += 1
+                                    if rating_value >= 400:
+                                        high_capacity_available["400A_above"] += 1
+                                    if rating_value >= 250:
+                                        high_capacity_available["250A_above"] += 1
+                                except ValueError:
+                                    pass  # 忽略无法转换的容量值
+            
+            return {
+                "by_rating": capacity_stats,
+                "high_capacity_available": high_capacity_available
+            }
+        except Exception as e:
+            print(f"获取容量统计时出错: {e}")
+            return {
+                "by_rating": {},
+                "high_capacity_available": {"630A_above": 0, "400A_above": 0, "250A_above": 0}
+            }
+    
+    def _get_device_port_details(self) -> list:
+        """获取设备端口详情 - 基于A端设备统计"""
+        try:
+            # 获取所有设备及其端口使用情况
+            devices = self.db.query(Device).all()
+
+            device_details = []
+            
+            for device in devices:
+                # 只统计该设备作为A端（源端）的连接记录
+                device_connections = self.db.query(Connection).filter(
+                    Connection.source_device_id == device.id
+                ).all()
+
+                # 使用集合来避免重复计算端口
+                all_ports = set()
+                connected_ports_set = set()
+                fuse_ports = set()
+                breaker_ports = set()
+                
+                for conn in device_connections:
+                    # 只统计该设备作为A端的端口
+                    if conn.source_fuse_number:
+                        port_key = f"fuse_{conn.source_fuse_number}"
+                        all_ports.add(port_key)
+                        fuse_ports.add(port_key)
+                        # 通过连接类型字段是否为空判断端口使用状态
+                        if conn.connection_type and conn.connection_type.strip():
+                            connected_ports_set.add(port_key)
+
+                    if conn.source_breaker_number:
+                        port_key = f"breaker_{conn.source_breaker_number}"
+                        all_ports.add(port_key)
+                        breaker_ports.add(port_key)
+                        # 通过连接类型字段是否为空判断端口使用状态
+                        if conn.connection_type and conn.connection_type.strip():
+                            connected_ports_set.add(port_key)
+
+                
+                total_ports = len(all_ports)
+                connected_ports = len(connected_ports_set)
+                
+                idle_ports = total_ports - connected_ports
+                utilization_rate = (connected_ports / total_ports * 100) if total_ports > 0 else 0
+                
+                device_details.append({
+                    "device_id": device.id,
+                    "device_name": device.name,
+                    "device_type": device.device_type or "未知",
+                    "station": device.station or "未知",
+                    "total_ports": total_ports,
+                    "connected_ports": connected_ports,
+                    "idle_ports": idle_ports,
+                    "utilization_rate": round(utilization_rate, 2),
+                    "fuse_ports": len(fuse_ports),
+                    "breaker_ports": len(breaker_ports)
+                })
+            
+            # 按利用率降序排序
+            device_details.sort(key=lambda x: x["utilization_rate"], reverse=True)
+            
+            return device_details
+        except Exception as e:
+            print(f"获取设备端口详情时出错: {e}")
+            return []
+    
+    def _extract_rating_from_spec(self, spec_string: str) -> str:
+        """从规格字符串中提取电流等级"""
+        if not spec_string:
+            return "未知"
+        
+        try:
+            # 匹配括号内的电流值，如 "NT4(500A)" -> "500A"
+            match = re.search(r'\((\d+)A\)', spec_string)
+            if match:
+                return f"{match.group(1)}A"
+            
+            # 匹配直接的电流值，如 "500A" -> "500A"
+            match = re.search(r'(\d+)A', spec_string)
+            if match:
+                return f"{match.group(1)}A"
+            
+            return "未知"
+        except Exception as e:
+            print(f"提取电流等级时出错: {e}")
+            return "未知"
+    
+    def get_device_port_details(self, device_id: int) -> dict:
+        """获取指定设备的端口详情"""
+        try:
+            # 获取设备信息
+            device = self.db.query(Device).filter(Device.id == device_id).first()
+            if not device:
+                raise HTTPException(status_code=404, detail="设备不存在")
+            
+            # 获取该设备的所有连接
+            connections = self.db.query(Connection).filter(
+                or_(
+                    Connection.source_device_id == device_id,
+                    Connection.target_device_id == device_id
+                )
+            ).all()
+            
+            # 分析端口使用情况
+            ports = []
+            for conn in connections:
+                if conn.source_device_id == device_id:
+                    # 作为源设备的端口
+                    if conn.source_fuse_number:
+                        ports.append({
+                            "port_number": conn.source_fuse_number,
+                            "port_type": "熔丝",
+                            "port_name": f"熔丝-{conn.source_fuse_number}",
+                            "specification": conn.source_fuse_spec or "未知",
+                            "rating": self._extract_rating_from_spec(conn.source_fuse_spec),
+                            "status": "已连接" if conn.target_device_id else "空闲",
+                            "connected_device": conn.target_device.name if conn.target_device else None,
+                            "connection_id": conn.id
+                        })
+                    
+                    if conn.source_breaker_number:
+                        ports.append({
+                            "port_number": conn.source_breaker_number,
+                            "port_type": "空开",
+                            "port_name": f"空开-{conn.source_breaker_number}",
+                            "specification": conn.source_breaker_spec or "未知",
+                            "rating": self._extract_rating_from_spec(conn.source_breaker_spec),
+                            "status": "已连接" if conn.target_device_id else "空闲",
+                            "connected_device": conn.target_device.name if conn.target_device else None,
+                            "connection_id": conn.id
+                        })
+                
+                if conn.target_device_id == device_id:
+                    # 作为目标设备的端口
+                    if conn.target_fuse_number:
+                        ports.append({
+                            "port_number": conn.target_fuse_number,
+                            "port_type": "熔丝",
+                            "port_name": f"熔丝-{conn.target_fuse_number}",
+                            "specification": conn.target_fuse_spec or "未知",
+                            "rating": self._extract_rating_from_spec(conn.target_fuse_spec),
+                            "status": "已连接" if conn.source_device_id else "空闲",
+                            "connected_device": conn.source_device.name if conn.source_device else None,
+                            "connection_id": conn.id
+                        })
+                    
+                    if conn.target_breaker_number:
+                        ports.append({
+                            "port_number": conn.target_breaker_number,
+                            "port_type": "空开",
+                            "port_name": f"空开-{conn.target_breaker_number}",
+                            "specification": conn.target_breaker_spec or "未知",
+                            "rating": self._extract_rating_from_spec(conn.target_breaker_spec),
+                            "status": "已连接" if conn.source_device_id else "空闲",
+                            "connected_device": conn.source_device.name if conn.source_device else None,
+                            "connection_id": conn.id
+                        })
+            
+            # 统计信息
+            total_ports = len(ports)
+            connected_ports = len([p for p in ports if p["status"] == "已连接"])
+            idle_ports = total_ports - connected_ports
+            utilization_rate = (connected_ports / total_ports * 100) if total_ports > 0 else 0
+            
+            return {
+                "device_info": {
+                    "id": device.id,
+                    "name": device.name,
+                    "device_type": device.device_type or "未知",
+                    "station": device.station or "未知",
+                    "location": device.location or "未知"
+                },
+                "port_summary": {
+                    "total_ports": total_ports,
+                    "connected_ports": connected_ports,
+                    "idle_ports": idle_ports,
+                    "utilization_rate": round(utilization_rate, 2)
+                },
+                "ports": sorted(ports, key=lambda x: (x["port_type"], x["port_number"]))
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"获取设备端口详情时出错: {e}")
+            raise HTTPException(status_code=500, detail=f"获取设备端口详情失败: {str(e)}")
 
 def verify_admin_password(password: str) -> bool:
     """
@@ -561,14 +937,32 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                 df_connections = None
             
             if df_connections is not None and len(df_connections) > 0:
-                # 连接类型映射
+                # 连接类型映射 - 扩展映射表以包含更多可能的空值表示
                 CONNECTION_TYPE_MAPPING = {
+                    # 标准连接类型
                     '电缆': 'cable',
                     '铜排': 'busbar', 
                     '母线': 'busway',
                     'cable': 'cable',
                     'busbar': 'busbar',
-                    'busway': 'busway'
+                    'busway': 'busway',
+                    # 空值的各种表示方式 - 统一映射为None表示空闲端口
+                    '无': None,
+                    '空': None,
+                    '空闲': None,
+                    '未连接': None,
+                    'N/A': None,
+                    'n/a': None,
+                    'NA': None,
+                    'na': None,
+                    '无连接': None,
+                    '待连接': None,
+                    '预留': None,
+                    'None': None,
+                    'null': None,
+                    'NULL': None,
+                    '': None,  # 空字符串
+                    ' ': None,  # 空格
                 }
                 
                 # 辅助函数：获取或创建设备
@@ -663,9 +1057,21 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                             row.get('B端空开编号'), row.get('空开规格')
                         )
                         
-                        # 处理连接类型
-                        connection_type_raw = str(row.get('连接类型（电缆 / 铜排 / 母线）', 'cable')).strip()
-                        connection_type = CONNECTION_TYPE_MAPPING.get(connection_type_raw, 'cable')
+                        # 处理连接类型 - 修复空闲端口被错误归类为电缆的问题
+                        connection_type_raw = row.get('连接类型（电缆 / 铜排 / 母线）')
+                        if pd.isna(connection_type_raw) or str(connection_type_raw).strip() == '':
+                            # 如果连接类型为空，说明是空闲端口，不设置连接类型
+                            connection_type = None
+                        else:
+                            connection_type_raw = str(connection_type_raw).strip()
+                            # 修复：当无法映射时，设置为None而不是默认的'cable'
+                            # 这样可以避免空闲端口被错误归类为电缆连接
+                            connection_type = CONNECTION_TYPE_MAPPING.get(connection_type_raw, None)
+                            
+                            # 如果连接类型仍然无法识别，记录警告但不设置为cable
+                            if connection_type_raw not in CONNECTION_TYPE_MAPPING:
+                                print(f"  * 警告：第 {index+2} 行连接类型 '{connection_type_raw}' 无法识别，设置为空闲端口")
+                                warnings.append(f"第 {index+2} 行：连接类型 '{connection_type_raw}' 无法识别")
                         
                         # 检查是否已存在相同连接
                         existing_connection = db.query(Connection).filter(
@@ -1811,8 +2217,8 @@ async def get_connections_statistics(db: Session = Depends(get_db)):
     获取连接统计信息
     """
     try:
-        # 总连接数
-        total_connections = db.query(Connection).count()
+        # 总连接数（只统计有效连接，即connection_type不为空的记录）
+        total_connections = db.query(Connection).filter(Connection.connection_type.isnot(None)).count()
         
         # 按连接类型统计
         connection_type_stats = db.query(
@@ -1876,6 +2282,52 @@ async def get_connections_statistics(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"获取连接统计失败: {str(e)}")
 
 
+@app.get("/api/ports/statistics")
+async def get_port_statistics(db: Session = Depends(get_db)):
+    """
+    获取端口统计信息
+    """
+    try:
+        # 创建端口统计服务实例
+        port_service = PortStatisticsService(db)
+        
+        # 获取端口统计数据
+        statistics = port_service.get_port_statistics()
+        
+        return JSONResponse(content={
+            "success": True,
+            "data": statistics
+        })
+        
+    except Exception as e:
+        print(f"获取端口统计失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取端口统计失败: {str(e)}")
+
+
+@app.get("/api/devices/{device_id}/ports")
+async def get_device_port_details(device_id: int, db: Session = Depends(get_db)):
+    """
+    获取指定设备的端口详情
+    """
+    try:
+        # 创建端口统计服务实例
+        port_service = PortStatisticsService(db)
+        
+        # 获取设备端口详情
+        port_details = port_service.get_device_port_details(device_id)
+        
+        return JSONResponse(content={
+            "success": True,
+            "data": port_details
+        })
+        
+    except Exception as e:
+        print(f"获取设备端口详情失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取设备端口详情失败: {str(e)}")
+
+
 @app.get("/api/connections")
 async def get_connections(
     page: int = Query(1, ge=1, description="页码"),
@@ -1896,7 +2348,8 @@ async def get_connections(
         target_device = aliased(Device)
         query = db.query(Connection, Device.name.label('source_device_name'), target_device.name.label('target_device_name'))\
                   .join(Device, Connection.source_device_id == Device.id)\
-                  .join(target_device, Connection.target_device_id == target_device.id)
+                  .join(target_device, Connection.target_device_id == target_device.id)\
+                  .filter(Connection.connection_type.isnot(None))  # 只显示有效连接，过滤空行
         
         # 应用筛选条件
         if source_device_id:

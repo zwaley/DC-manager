@@ -4,7 +4,7 @@
 import sqlite3
 
 # 连接数据库
-conn = sqlite3.connect('asset_management.db')
+conn = sqlite3.connect('database/asset.db')
 cursor = conn.cursor()
 
 try:
