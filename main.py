@@ -1769,6 +1769,8 @@ class ConnectionResponse(BaseModel):
     target_device_id: int
     source_device_name: str
     target_device_name: str
+    source_port: Optional[str]  # 源端口名称（带前缀）
+    target_port: Optional[str]  # 目标端口名称（带前缀）
     connection_type: Optional[str]
     cable_model: Optional[str]
     source_fuse_number: Optional[str]
@@ -1919,6 +1921,21 @@ async def get_connections(
         offset = (page - 1) * page_size
         results = query.offset(offset).limit(page_size).all()
         
+        # 辅助函数：根据熔丝/空开编号为端口名称添加前缀
+        def build_port_name_with_prefix(fuse_number, breaker_number, original_port=None):
+            """根据熔丝编号或空开编号为端口名称添加前缀"""
+            fuse_num = str(fuse_number).strip() if fuse_number and str(fuse_number).strip() not in ['', 'nan', 'None'] else ''
+            breaker_num = str(breaker_number).strip() if breaker_number and str(breaker_number).strip() not in ['', 'nan', 'None'] else ''
+            
+            # 优先使用熔丝编号
+            if fuse_num:
+                return f"熔丝_{fuse_num}"
+            elif breaker_num:
+                return f"空开_{breaker_num}"
+            else:
+                # 如果都没有，返回原始端口名称或空字符串
+                return original_port if original_port else ''
+        
         # 构建响应数据 - 手动序列化日期字段以避免JSON序列化错误
         result = []
         for conn, source_name, target_name in results:
@@ -1926,6 +1943,18 @@ async def get_connections(
             installation_date_str = conn.installation_date.isoformat() if conn.installation_date else None
             created_at_str = conn.created_at.isoformat() if conn.created_at else None
             updated_at_str = conn.updated_at.isoformat() if conn.updated_at else None
+            
+            # 构建带前缀的端口名称
+            source_port_with_prefix = build_port_name_with_prefix(
+                conn.source_fuse_number, 
+                conn.source_breaker_number, 
+                conn.source_port
+            )
+            target_port_with_prefix = build_port_name_with_prefix(
+                conn.target_fuse_number, 
+                conn.target_breaker_number, 
+                conn.target_port
+            )
             
             result.append({
                 "id": conn.id,
@@ -1935,6 +1964,8 @@ async def get_connections(
                 "target_device_name": target_name,
                 "connection_type": conn.connection_type,
                 "cable_model": conn.cable_model,
+                "source_port": source_port_with_prefix,  # 使用带前缀的端口名称
+                "target_port": target_port_with_prefix,  # 使用带前缀的端口名称
                 "source_fuse_number": conn.source_fuse_number,
                 "source_fuse_spec": conn.source_fuse_spec,
                 "source_breaker_number": conn.source_breaker_number,
@@ -2296,6 +2327,14 @@ async def get_connection(
             target_device_id=connection.target_device_id,
             source_device_name=connection.source_device.name,
             target_device_name=connection.target_device.name,
+            source_port=build_port_name_with_prefix(
+                connection.source_fuse_number, 
+                connection.source_breaker_number
+            ),
+            target_port=build_port_name_with_prefix(
+                connection.target_fuse_number, 
+                connection.target_breaker_number
+            ),
             connection_type=connection.connection_type,
             cable_model=connection.cable_model,
             source_fuse_number=connection.source_fuse_number,

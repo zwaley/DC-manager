@@ -272,6 +272,133 @@
             font-style: italic;
         }
         
+        /* 固定表头样式 */
+        .table-responsive {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .table-responsive table {
+            position: relative;
+        }
+        
+        .table-responsive thead th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background-color: #4a69bd !important; /* 使用统一的蓝色背景 */
+            border-bottom: 2px solid #dee2e6;
+        }
+        
+        /* 确保表头固定样式优先级 */
+        .table-responsive .table thead th {
+            position: sticky !important;
+            top: 0 !important;
+            z-index: 10 !important;
+            background-color: #4a69bd !important;
+        }
+        
+        /* 表格样式 */
+        .table {
+            margin-bottom: 0;
+            table-layout: fixed;
+        }
+        
+        /* 表头样式 - 参考连接管理页面 */
+        .table thead th {
+            background-color: #4a69bd !important;
+            color: #ffffff !important;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            position: relative;
+            border-color: #4a69bd !important;
+            padding: 12px 15px;
+        }
+        
+        /* 表头分隔线 */
+        thead th:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: 20%;
+            height: 60%;
+            width: 1px;
+            background-color: rgba(255, 255, 255, 0.3);
+        }
+        
+        /* 设备管理表格列宽优化 */
+        th:nth-child(1), td:nth-child(1) { /* ID */
+            text-align: center;
+            width: 60px;
+        }
+        th:nth-child(2), td:nth-child(2) { /* 资产编号 */
+            text-align: left;
+            width: 120px;
+        }
+        th:nth-child(3), td:nth-child(3) { /* 设备名称 */
+            text-align: left;
+            width: 150px;
+        }
+        th:nth-child(4), td:nth-child(4) { /* 局站 */
+            text-align: left;
+            width: 120px;
+        }
+        th:nth-child(5), td:nth-child(5) { /* 设备类型 */
+            text-align: left;
+            width: 100px;
+        }
+        th:nth-child(6), td:nth-child(6) { /* 设备型号 */
+            text-align: left;
+            width: 120px;
+        }
+        th:nth-child(7), td:nth-child(7) { /* 所在位置 */
+            text-align: left;
+            width: 120px;
+        }
+        th:nth-child(8), td:nth-child(8) { /* 额定容量 */
+            text-align: right;
+            width: 100px;
+        }
+        th:nth-child(9), td:nth-child(9) { /* 设备生产厂家 */
+            text-align: left;
+            width: 130px;
+        }
+        th:nth-child(10), td:nth-child(10) { /* 投产日期 */
+            text-align: center;
+            width: 100px;
+        }
+        th:nth-child(11), td:nth-child(11) { /* 生命周期状态 */
+            text-align: center;
+            width: 120px;
+        }
+        th:nth-child(12), td:nth-child(12) { /* 备注 */
+            text-align: left;
+            width: 120px;
+        }
+        th:nth-child(13), td:nth-child(13) { /* 操作 */
+            text-align: center;
+            width: 180px;
+            min-width: 180px;
+        }
+        
+        .table td {
+            vertical-align: middle;
+            padding: 12px 15px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        tbody tr:nth-of-type(even) {
+            background-color: #e9ecef;
+            color: #333333;
+        }
+        tbody tr:hover {
+            background-color: #007bff;
+            color: #ffffff;
+        }
+        
         /* 页面导航按钮样式已使用Bootstrap组件替换 */
     </style>
 </head>
@@ -554,17 +681,39 @@
     <script>
         // 页面滚动功能
         function scrollToTop() {
+            // 滚动到页面顶部
             window.scrollTo({
                 top: 0,
                 behavior: 'smooth'
             });
+            
+            // 同时滚动表格容器到顶部
+            const tableContainer = document.querySelector('.table-responsive');
+            if (tableContainer) {
+                tableContainer.scrollTo({
+                    top: 0,
+                    behavior: 'smooth'
+                });
+            }
         }
         
         function scrollToBottom() {
+            // 先滚动到页面底部
             window.scrollTo({
                 top: document.body.scrollHeight,
                 behavior: 'smooth'
             });
+            
+            // 然后滚动表格容器到底部
+            const tableContainer = document.querySelector('.table-responsive');
+            if (tableContainer) {
+                setTimeout(() => {
+                    tableContainer.scrollTo({
+                        top: tableContainer.scrollHeight,
+                        behavior: 'smooth'
+                    });
+                }, 300); // 延迟300ms确保页面滚动完成
+            }
         }
         
         // 创建密码输入对话框

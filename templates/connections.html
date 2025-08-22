@@ -107,35 +107,35 @@
         }
         
         /* 特定列的对齐方式和宽度优化 */
-        th:nth-child(1), td:nth-child(1) { /* 连接ID */
+        th:nth-child(1), td:nth-child(1) { /* 连接ID - 压缩 */
             text-align: center;
-            width: 80px;
+            width: 60px;
         }
         th:nth-child(2), td:nth-child(2) { /* A端设备 */
             text-align: left;
             width: 150px;
         }
-        th:nth-child(3), td:nth-child(3) { /* A端端口 */
+        th:nth-child(3), td:nth-child(3) { /* A端端口 - 加宽 */
             text-align: center;
-            width: 100px;
+            width: 140px;
         }
-        th:nth-child(4), td:nth-child(4) { /* A端额定电流 */
+        th:nth-child(4), td:nth-child(4) { /* A端额定电流 - 压缩 */
             text-align: right;
             font-family: 'Courier New', monospace;
-            width: 120px;
+            width: 90px;
         }
         th:nth-child(5), td:nth-child(5) { /* B端设备 */
             text-align: left;
             width: 150px;
         }
-        th:nth-child(6), td:nth-child(6) { /* B端端口 */
+        th:nth-child(6), td:nth-child(6) { /* B端端口 - 加宽 */
             text-align: center;
-            width: 100px;
+            width: 140px;
         }
-        th:nth-child(7), td:nth-child(7) { /* B端额定电流 */
+        th:nth-child(7), td:nth-child(7) { /* B端额定电流 - 压缩 */
             text-align: right;
             font-family: 'Courier New', monospace;
-            width: 120px;
+            width: 90px;
         }
         th:nth-child(8), td:nth-child(8) { /* 连接类型 */
             text-align: center;
@@ -145,14 +145,14 @@
             text-align: left;
             width: 120px;
         }
-        th:nth-child(10), td:nth-child(10) { /* 备注 */
+        th:nth-child(10), td:nth-child(10) { /* 备注 - 加宽 */
             text-align: left;
-            width: 150px;
+            width: 140px;
         }
-        th:nth-child(11), td:nth-child(11) { /* 操作 */
+        th:nth-child(11), td:nth-child(11) { /* 操作 - 进一步压缩 */
             text-align: center;
-            width: 180px;
-            min-width: 180px;
+            width: 120px;
+            min-width: 120px;
         }
         
         .table td {
@@ -173,6 +173,42 @@
         tbody tr:hover {
             background-color: #007bff;
             color: #ffffff;
+        }
+        
+        /* 一键到顶部和底部按钮样式 */
+        .scroll-buttons {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .scroll-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: none;
+            background-color: #007bff;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .scroll-btn:hover {
+            background-color: #0056b3;
+            transform: scale(1.1);
+        }
+        
+        .scroll-btn:active {
+            transform: scale(0.95);
         }
         .connection-diagram {
             background-color: #f8f9fa;
@@ -340,6 +376,16 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- 一键到顶部和底部按钮 -->
+    <div class="scroll-buttons">
+        <button class="scroll-btn" onclick="scrollToTop()" title="回到顶部">
+            <i class="fas fa-chevron-up"></i>
+        </button>
+        <button class="scroll-btn" onclick="scrollToBottom()" title="到达底部">
+            <i class="fas fa-chevron-down"></i>
+        </button>
     </div>
 
     <!-- 添加/编辑连接模态框 -->
@@ -662,10 +708,10 @@
                 row.innerHTML = `
                     <td>${conn.id}</td>
                     <td>${conn.source_device_name || 'N/A'}</td>
-                    <td>${conn.source_fuse_number || conn.source_breaker_number || '-'}</td>
+                    <td>${conn.source_port || '-'}</td>
                     <td>${sourceRating}</td>
                     <td>${conn.target_device_name || 'N/A'}</td>
-                    <td>${conn.target_fuse_number || conn.target_breaker_number || '-'}</td>
+                    <td>${conn.target_port || '-'}</td>
                     <td>${targetRating}</td>
                     <td><span class="badge status-badge connection-type-${typeClass}">${displayType}</span></td>
                     <td>${conn.cable_model || '-'}</td>
@@ -844,6 +890,34 @@
         function loadTopology() {
             const container = document.getElementById('topologyContainer');
             container.innerHTML = '<p class="text-muted">拓扑图功能开发中，敬请期待...</p>';
+        }
+
+        // 滚动到顶部
+        function scrollToTop() {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        }
+
+        // 滚动到底部
+        function scrollToBottom() {
+            // 首先滚动到页面底部
+            window.scrollTo({
+                top: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight),
+                behavior: 'smooth'
+            });
+            
+            // 然后滚动表格容器到底部
+            setTimeout(() => {
+                const tableContainer = document.querySelector('.table-responsive');
+                if (tableContainer) {
+                    tableContainer.scrollTo({
+                        top: tableContainer.scrollHeight,
+                        behavior: 'smooth'
+                    });
+                }
+            }, 300); // 延迟300ms确保页面滚动完成
         }
     </script>
 </body>
