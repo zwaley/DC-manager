@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Trae AI
+.trae/
+
+# Database backups
+database_backups/
+database/asset_backup_*.db
+
+# Local database files
+asset_management.db
+dc_asset_manager.db
+database/asset.db
+
+# Temporary and one-off scripts
+check_*.py
+test_*.py
+debug_*.py
+fix_*.py
+analyze_*.py
+migrate_connection_table.py
+read_excel.py
+init_and_check_db.py
+add_default_lifecycle_rule.py

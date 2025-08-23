@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI, Request, Depends, Form, UploadFile, File, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
+from fastapi.encoders import jsonable_encoder
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session, aliased
@@ -2328,6 +2329,22 @@ async def get_device_port_details(device_id: int, db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"获取设备端口详情失败: {str(e)}")
 
 
+# 辅助函数：根据熔丝/空开编号为端口名称添加前缀
+def build_port_name_with_prefix(fuse_number, breaker_number, original_port=None):
+    """根据熔丝编号或空开编号为端口名称添加前缀"""
+    fuse_num = str(fuse_number).strip() if fuse_number and str(fuse_number).strip() not in ['', 'nan', 'None'] else ''
+    breaker_num = str(breaker_number).strip() if breaker_number and str(breaker_number).strip() not in ['', 'nan', 'None'] else ''
+    
+    # 优先使用熔丝编号
+    if fuse_num:
+        return f"熔丝_{fuse_num}"
+    elif breaker_num:
+        return f"空开_{breaker_num}"
+    else:
+        # 如果都没有，返回原始端口名称或空字符串
+        return original_port if original_port else ''
+
+
 @app.get("/api/connections")
 async def get_connections(
     page: int = Query(1, ge=1, description="页码"),
@@ -2373,21 +2390,6 @@ async def get_connections(
         # 应用分页
         offset = (page - 1) * page_size
         results = query.offset(offset).limit(page_size).all()
-        
-        # 辅助函数：根据熔丝/空开编号为端口名称添加前缀
-        def build_port_name_with_prefix(fuse_number, breaker_number, original_port=None):
-            """根据熔丝编号或空开编号为端口名称添加前缀"""
-            fuse_num = str(fuse_number).strip() if fuse_number and str(fuse_number).strip() not in ['', 'nan', 'None'] else ''
-            breaker_num = str(breaker_number).strip() if breaker_number and str(breaker_number).strip() not in ['', 'nan', 'None'] else ''
-            
-            # 优先使用熔丝编号
-            if fuse_num:
-                return f"熔丝_{fuse_num}"
-            elif breaker_num:
-                return f"空开_{breaker_num}"
-            else:
-                # 如果都没有，返回原始端口名称或空字符串
-                return original_port if original_port else ''
         
         # 构建响应数据 - 手动序列化日期字段以避免JSON序列化错误
         result = []
@@ -2633,10 +2635,32 @@ async def create_connection(
         raise HTTPException(status_code=500, detail=f"创建连接失败: {str(e)}")
 
 
-@app.put("/api/connections/{connection_id}", response_model=ConnectionResponse)
+@app.put("/api/connections/{connection_id}")
 async def update_connection(
     connection_id: int,
-    connection: ConnectionUpdate,
+    source_device_id: Optional[int] = Form(None),
+    target_device_id: Optional[int] = Form(None),
+    source_port: Optional[str] = Form(None),
+    target_port: Optional[str] = Form(None),
+    connection_type: Optional[str] = Form(None),
+    cable_model: Optional[str] = Form(None),
+    source_fuse_number: Optional[str] = Form(None),
+    source_fuse_spec: Optional[str] = Form(None),
+    source_breaker_number: Optional[str] = Form(None),
+    source_breaker_spec: Optional[str] = Form(None),
+    target_fuse_number: Optional[str] = Form(None),
+    target_fuse_spec: Optional[str] = Form(None),
+    target_breaker_number: Optional[str] = Form(None),
+    target_breaker_spec: Optional[str] = Form(None),
+    hierarchy_relation: Optional[str] = Form(None),
+    upstream_downstream: Optional[str] = Form(None),
+    parallel_count: Optional[int] = Form(None),
+    rated_current: Optional[float] = Form(None),
+    cable_length: Optional[float] = Form(None),
+    source_device_photo: Optional[str] = Form(None),
+    target_device_photo: Optional[str] = Form(None),
+    remark: Optional[str] = Form(None),
+    installation_date: Optional[str] = Form(None),
     password: str = Form(...),
     db: Session = Depends(get_db)
 ):
@@ -2655,63 +2679,108 @@ async def update_connection(
             raise HTTPException(status_code=404, detail="连接不存在")
         
         # 如果要更新设备ID，验证设备是否存在
-        if connection.source_device_id is not None:
-            source_device = db.query(Device).filter(Device.id == connection.source_device_id).first()
+        if source_device_id is not None:
+            source_device = db.query(Device).filter(Device.id == source_device_id).first()
             if not source_device:
-                raise HTTPException(status_code=404, detail=f"源设备ID {connection.source_device_id} 不存在")
-            existing_connection.source_device_id = connection.source_device_id
+                raise HTTPException(status_code=404, detail=f"源设备ID {source_device_id} 不存在")
+            existing_connection.source_device_id = source_device_id
         
-        if connection.target_device_id is not None:
-            target_device = db.query(Device).filter(Device.id == connection.target_device_id).first()
+        if target_device_id is not None:
+            target_device = db.query(Device).filter(Device.id == target_device_id).first()
             if not target_device:
-                raise HTTPException(status_code=404, detail=f"目标设备ID {connection.target_device_id} 不存在")
-            existing_connection.target_device_id = connection.target_device_id
+                raise HTTPException(status_code=404, detail=f"目标设备ID {target_device_id} 不存在")
+            existing_connection.target_device_id = target_device_id
+        
+        # 更新端口字段
+        if source_port is not None:
+            existing_connection.source_port = source_port
+        if target_port is not None:
+            existing_connection.target_port = target_port
         
         # 更新其他字段
-        update_data = connection.dict(exclude_unset=True)
-        for field, value in update_data.items():
-            if field not in ['source_device_id', 'target_device_id']:  # 这两个字段已经处理过了
-                setattr(existing_connection, field, value)
+        if connection_type is not None:
+            existing_connection.connection_type = connection_type
+        if cable_model is not None:
+            existing_connection.cable_model = cable_model
+        if source_fuse_number is not None:
+            existing_connection.source_fuse_number = source_fuse_number
+        if source_fuse_spec is not None:
+            existing_connection.source_fuse_spec = source_fuse_spec
+        if source_breaker_number is not None:
+            existing_connection.source_breaker_number = source_breaker_number
+        if source_breaker_spec is not None:
+            existing_connection.source_breaker_spec = source_breaker_spec
+        if target_fuse_number is not None:
+            existing_connection.target_fuse_number = target_fuse_number
+        if target_fuse_spec is not None:
+            existing_connection.target_fuse_spec = target_fuse_spec
+        if target_breaker_number is not None:
+            existing_connection.target_breaker_number = target_breaker_number
+        if target_breaker_spec is not None:
+            existing_connection.target_breaker_spec = target_breaker_spec
+        if hierarchy_relation is not None:
+            existing_connection.hierarchy_relation = hierarchy_relation
+        if upstream_downstream is not None:
+            existing_connection.upstream_downstream = upstream_downstream
+        if parallel_count is not None:
+            existing_connection.parallel_count = parallel_count
+        if rated_current is not None:
+            existing_connection.rated_current = rated_current
+        if cable_length is not None:
+            existing_connection.cable_length = cable_length
+        if source_device_photo is not None:
+            existing_connection.source_device_photo = source_device_photo
+        if target_device_photo is not None:
+            existing_connection.target_device_photo = target_device_photo
+        if remark is not None:
+            existing_connection.remark = remark
+        if installation_date is not None:
+            try:
+                existing_connection.installation_date = datetime.strptime(installation_date, '%Y-%m-%d').date()
+            except ValueError:
+                existing_connection.installation_date = None
         
         existing_connection.updated_at = datetime.now()
         
         db.commit()
         db.refresh(existing_connection)
         
-        # 构建响应
-        response = ConnectionResponse(
-            id=existing_connection.id,
-            source_device_id=existing_connection.source_device_id,
-            target_device_id=existing_connection.target_device_id,
-            source_device_name=existing_connection.source_device.name,
-            target_device_name=existing_connection.target_device.name,
-            connection_type=existing_connection.connection_type,
-            cable_model=existing_connection.cable_model,
-            source_fuse_number=existing_connection.source_fuse_number,
-            source_fuse_spec=existing_connection.source_fuse_spec,
-            source_breaker_number=existing_connection.source_breaker_number,
-            source_breaker_spec=existing_connection.source_breaker_spec,
-            target_fuse_number=existing_connection.target_fuse_number,
-            target_fuse_spec=existing_connection.target_fuse_spec,
-            target_breaker_number=existing_connection.target_breaker_number,
-            target_breaker_spec=existing_connection.target_breaker_spec,
-            hierarchy_relation=existing_connection.hierarchy_relation,
-            upstream_downstream=existing_connection.upstream_downstream,
-            parallel_count=existing_connection.parallel_count,
-            rated_current=existing_connection.rated_current,
-            cable_length=existing_connection.cable_length,
-            source_device_photo=existing_connection.source_device_photo,
-            target_device_photo=existing_connection.target_device_photo,
-            remark=existing_connection.remark,
-            installation_date=existing_connection.installation_date,
-            created_at=existing_connection.created_at,
-            updated_at=existing_connection.updated_at
-        )
+        # 构建响应数据
+        response_data = {
+            "id": existing_connection.id,
+            "source_device_id": existing_connection.source_device_id,
+            "target_device_id": existing_connection.target_device_id,
+            "source_device_name": existing_connection.source_device.name,
+            "target_device_name": existing_connection.target_device.name,
+            "source_port": existing_connection.source_port,
+            "target_port": existing_connection.target_port,
+            "connection_type": existing_connection.connection_type,
+            "cable_model": existing_connection.cable_model,
+            "source_fuse_number": existing_connection.source_fuse_number,
+            "source_fuse_spec": existing_connection.source_fuse_spec,
+            "source_breaker_number": existing_connection.source_breaker_number,
+            "source_breaker_spec": existing_connection.source_breaker_spec,
+            "target_fuse_number": existing_connection.target_fuse_number,
+            "target_fuse_spec": existing_connection.target_fuse_spec,
+            "target_breaker_number": existing_connection.target_breaker_number,
+            "target_breaker_spec": existing_connection.target_breaker_spec,
+            "hierarchy_relation": existing_connection.hierarchy_relation,
+            "upstream_downstream": existing_connection.upstream_downstream,
+            "parallel_count": existing_connection.parallel_count,
+            "rated_current": existing_connection.rated_current,
+            "cable_length": existing_connection.cable_length,
+            "source_device_photo": existing_connection.source_device_photo,
+            "target_device_photo": existing_connection.target_device_photo,
+            "remark": existing_connection.remark,
+            "installation_date": existing_connection.installation_date.isoformat() if existing_connection.installation_date else None,
+            "created_at": existing_connection.created_at.isoformat() if existing_connection.created_at else None,
+            "updated_at": existing_connection.updated_at.isoformat() if existing_connection.updated_at else None
+        }
         
         return JSONResponse(content={
             "success": True,
             "message": "连接更新成功",
-            "data": response.dict()
+            "data": response_data
         })
         
     except HTTPException:
@@ -2774,46 +2843,51 @@ async def get_connection(
         if not connection:
             raise HTTPException(status_code=404, detail="连接不存在")
         
-        response = ConnectionResponse(
-            id=connection.id,
-            source_device_id=connection.source_device_id,
-            target_device_id=connection.target_device_id,
-            source_device_name=connection.source_device.name,
-            target_device_name=connection.target_device.name,
-            source_port=build_port_name_with_prefix(
+        # 手动处理日期字段的序列化
+        installation_date_str = connection.installation_date.isoformat() if connection.installation_date else None
+        created_at_str = connection.created_at.isoformat() if connection.created_at else None
+        updated_at_str = connection.updated_at.isoformat() if connection.updated_at else None
+        
+        response_data = {
+            "id": connection.id,
+            "source_device_id": connection.source_device_id,
+            "target_device_id": connection.target_device_id,
+            "source_device_name": connection.source_device.name,
+            "target_device_name": connection.target_device.name,
+            "source_port": build_port_name_with_prefix(
                 connection.source_fuse_number, 
                 connection.source_breaker_number
             ),
-            target_port=build_port_name_with_prefix(
+            "target_port": build_port_name_with_prefix(
                 connection.target_fuse_number, 
                 connection.target_breaker_number
             ),
-            connection_type=connection.connection_type,
-            cable_model=connection.cable_model,
-            source_fuse_number=connection.source_fuse_number,
-            source_fuse_spec=connection.source_fuse_spec,
-            source_breaker_number=connection.source_breaker_number,
-            source_breaker_spec=connection.source_breaker_spec,
-            target_fuse_number=connection.target_fuse_number,
-            target_fuse_spec=connection.target_fuse_spec,
-            target_breaker_number=connection.target_breaker_number,
-            target_breaker_spec=connection.target_breaker_spec,
-            hierarchy_relation=connection.hierarchy_relation,
-            upstream_downstream=connection.upstream_downstream,
-            parallel_count=connection.parallel_count,
-            rated_current=connection.rated_current,
-            cable_length=connection.cable_length,
-            source_device_photo=connection.source_device_photo,
-            target_device_photo=connection.target_device_photo,
-            remark=connection.remark,
-            installation_date=connection.installation_date,
-            created_at=connection.created_at,
-            updated_at=connection.updated_at
-        )
+            "connection_type": connection.connection_type,
+            "cable_model": connection.cable_model,
+            "source_fuse_number": connection.source_fuse_number,
+            "source_fuse_spec": connection.source_fuse_spec,
+            "source_breaker_number": connection.source_breaker_number,
+            "source_breaker_spec": connection.source_breaker_spec,
+            "target_fuse_number": connection.target_fuse_number,
+            "target_fuse_spec": connection.target_fuse_spec,
+            "target_breaker_number": connection.target_breaker_number,
+            "target_breaker_spec": connection.target_breaker_spec,
+            "hierarchy_relation": connection.hierarchy_relation,
+            "upstream_downstream": connection.upstream_downstream,
+            "parallel_count": connection.parallel_count,
+            "rated_current": connection.rated_current,
+            "cable_length": connection.cable_length,
+            "source_device_photo": connection.source_device_photo,
+            "target_device_photo": connection.target_device_photo,
+            "remark": connection.remark,
+            "installation_date": installation_date_str,
+            "created_at": created_at_str,
+            "updated_at": updated_at_str
+        }
         
         return JSONResponse(content={
             "success": True,
-            "data": response.dict()
+            "data": response_data
         })
         
     except HTTPException:
