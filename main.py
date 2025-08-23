@@ -60,7 +60,7 @@ class PortStatisticsService:
             raise HTTPException(status_code=500, detail=f"获取端口统计信息失败: {str(e)}")
     
     def _get_device_port_summary(self) -> dict:
-        """获取设备端口总览 - 基于A端设备统计"""
+        """获取设备端口总览 - 采用集合统计逻辑，统计所有有连接的端口"""
         try:
             # 统计总设备数
             total_devices = self.db.query(Device).count()
@@ -73,7 +73,7 @@ class PortStatisticsService:
             connections = self.db.query(Connection).all()
             
             for conn in connections:
-                # 只统计A端（源端）设备的端口
+                # 统计源端口（A端）
                 if conn.source_fuse_number and conn.source_device_id:
                     port_key = f"device_{conn.source_device_id}_fuse_{conn.source_fuse_number}"
                     all_ports.add(port_key)
@@ -83,6 +83,21 @@ class PortStatisticsService:
                         
                 if conn.source_breaker_number and conn.source_device_id:
                     port_key = f"device_{conn.source_device_id}_breaker_{conn.source_breaker_number}"
+                    all_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_ports.add(port_key)
+                
+                # 统计目标端口（B端）- 符合设计文档中"一个连接占用两个端口"的要求
+                if conn.target_fuse_number and conn.target_device_id:
+                    port_key = f"device_{conn.target_device_id}_fuse_{conn.target_fuse_number}"
+                    all_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_ports.add(port_key)
+                        
+                if conn.target_breaker_number and conn.target_device_id:
+                    port_key = f"device_{conn.target_device_id}_breaker_{conn.target_breaker_number}"
                     all_ports.add(port_key)
                     # 通过连接类型字段是否为空判断端口使用状态
                     if conn.connection_type and conn.connection_type.strip():
@@ -2212,14 +2227,85 @@ class ConnectionResponse(BaseModel):
 
 # --- 连接管理 RESTful API 接口 ---
 
+def get_unique_connections_count(db: Session) -> int:
+    """
+    获取去重后的连接数量
+    通过识别双向连接并去重来获得真实的连接数量
+    """
+    # 获取所有有效连接
+    connections = db.query(Connection).filter(Connection.connection_type.isnot(None)).all()
+    
+    # 使用集合存储唯一连接
+    unique_connections = set()
+    
+    for conn in connections:
+        # 创建连接的唯一标识
+        # 对于双向连接，使用较小的设备ID作为第一个参数，确保A->B和B->A生成相同的标识
+        device_pair = tuple(sorted([conn.source_device_id, conn.target_device_id]))
+        
+        # 结合端口信息创建更精确的连接标识
+        source_port = conn.source_fuse_number or conn.source_breaker_number or ""
+        target_port = conn.target_fuse_number or conn.target_breaker_number or ""
+        
+        # 为双向连接创建统一的标识
+        if conn.source_device_id == device_pair[0]:
+            connection_key = (device_pair[0], device_pair[1], source_port, target_port, conn.connection_type)
+        else:
+            connection_key = (device_pair[0], device_pair[1], target_port, source_port, conn.connection_type)
+        
+        unique_connections.add(connection_key)
+    
+    return len(unique_connections)
+
+
+def get_connected_ports_count(db: Session) -> int:
+    """
+    直接统计所有有连接的端口数量
+    这种方法能够准确处理内部设备互连和外部设备连接
+    """
+    connections = db.query(Connection).filter(Connection.connection_type.isnot(None)).all()
+    connected_ports = set()
+    
+    for conn in connections:
+        # 添加源端口
+        if conn.source_fuse_number:
+            port_id = f"{conn.source_device_id}_fuse_{conn.source_fuse_number}"
+            connected_ports.add(port_id)
+        if conn.source_breaker_number:
+            port_id = f"{conn.source_device_id}_breaker_{conn.source_breaker_number}"
+            connected_ports.add(port_id)
+            
+        # 添加目标端口
+        if conn.target_fuse_number:
+            port_id = f"{conn.target_device_id}_fuse_{conn.target_fuse_number}"
+            connected_ports.add(port_id)
+        if conn.target_breaker_number:
+            port_id = f"{conn.target_device_id}_breaker_{conn.target_breaker_number}"
+            connected_ports.add(port_id)
+    
+    return len(connected_ports)
+
+
 @app.get("/api/connections/statistics")
 async def get_connections_statistics(db: Session = Depends(get_db)):
     """
     获取连接统计信息
     """
     try:
-        # 总连接数（只统计有效连接，即connection_type不为空的记录）
-        total_connections = db.query(Connection).filter(Connection.connection_type.isnot(None)).count()
+        # 使用去重算法获取真实的连接数量
+        total_connections = get_unique_connections_count(db)
+        
+        # 使用PortStatisticsService统一的统计逻辑，确保数据一致性
+        port_service = PortStatisticsService(db)
+        port_summary = port_service._get_device_port_summary()
+        
+        # 从统一的端口统计服务获取数据
+        total_ports = port_summary.get('total_ports', 0)
+        connected_ports_count = port_summary.get('connected_ports', 0)
+        idle_ports = port_summary.get('idle_ports', 0)
+        
+        # 获取设备总数
+        total_devices = db.query(Device).count()
         
         # 按连接类型统计
         connection_type_stats = db.query(
@@ -2261,7 +2347,11 @@ async def get_connections_statistics(db: Session = Depends(get_db)):
         return JSONResponse(content={
             "success": True,
             "data": {
-                "total": total_connections,
+                "total_devices": total_devices,
+                "total_ports": total_ports,
+                "connected_ports": connected_ports_count,
+                "idle_ports": idle_ports,
+                "total_connections": total_connections,
                 "cable": cable_count,
                 "busbar": busbar_count,
                 "bus": bus_count,
@@ -2365,8 +2455,7 @@ async def get_connections(
         target_device = aliased(Device)
         query = db.query(Connection, Device.name.label('source_device_name'), target_device.name.label('target_device_name'))\
                   .join(Device, Connection.source_device_id == Device.id)\
-                  .join(target_device, Connection.target_device_id == target_device.id)\
-                  .filter(Connection.connection_type.isnot(None))  # 只显示有效连接，过滤空行
+                  .join(target_device, Connection.target_device_id == target_device.id)
         
         # 应用筛选条件
         if source_device_id:
@@ -2374,7 +2463,28 @@ async def get_connections(
         if target_device_id:
             query = query.filter(Connection.target_device_id == target_device_id)
         if connection_type:
-            query = query.filter(Connection.connection_type.ilike(f"%{connection_type}%"))
+            if connection_type == "空闲":
+                # 筛选空闲端口：连接类型为空且A端设备有熔丝或空开数据
+                query = query.filter(
+                    and_(
+                        Connection.connection_type.is_(None),
+                        or_(
+                            Connection.source_fuse_number.isnot(None),
+                            Connection.source_breaker_number.isnot(None)
+                        )
+                    )
+                )
+            else:
+                query = query.filter(Connection.connection_type.ilike(f"%{connection_type}%"))
+        else:
+            # 如果没有指定连接类型筛选，默认显示所有记录（包括空闲端口）
+            # 但要确保A端设备有端口数据（熔丝或空开）
+            query = query.filter(
+                or_(
+                    Connection.source_fuse_number.isnot(None),
+                    Connection.source_breaker_number.isnot(None)
+                )
+            )
         # 按设备名称模糊查询（匹配源设备或目标设备）
         if device_name:
             query = query.filter(
