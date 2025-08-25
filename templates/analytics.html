@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>统计分析 - 安吉电信动力设备管理系统</title>
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/font-awesome.min.css" rel="stylesheet">
+    <script src="/static/js/chart.min.js"></script>
+    <style>
+        .analytics-card {
+            border-left: 4px solid #007bff;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            height: 120px;
+        }
+        .analytics-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+            background-color: #f8f9fa;
+        }
+        .analytics-card.utilization {
+            border-left-color: #28a745;
+        }
+        .analytics-card.idle {
+            border-left-color: #ffc107;
+        }
+        .analytics-card.capacity {
+            border-left-color: #dc3545;
+        }
+        .analytics-card.summary {
+            border-left-color: #6f42c1;
+        }
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin: 0;
+        }
+        .metric-label {
+            font-size: 0.9rem;
+            color: #6c757d;
+            margin: 0;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin: 20px 0;
+        }
+        .data-table {
+            font-size: 0.9rem;
+        }
+        .progress-custom {
+            height: 8px;
+        }
+        .alert-threshold {
+            border-left: 4px solid #dc3545;
+        }
+        .warning-threshold {
+            border-left: 4px solid #ffc107;
+        }
+        .normal-threshold {
+            border-left: 4px solid #28a745;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- 导航栏 -->
+        <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="/">
+                    <i class="fas fa-bolt"></i> 安吉电信动力设备管理系统
+                </a>
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link" href="/">设备管理</a>
+                    <a class="nav-link" href="/connections">连接管理</a>
+                    <a class="nav-link active" href="/analytics">统计分析</a>
+                    <a class="nav-link" href="/lifecycle-management">生命周期管理</a>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 关键指标卡片区域 -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h4 class="mb-3"><i class="fas fa-tachometer-alt me-2"></i>关键指标概览</h4>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card analytics-card utilization" onclick="showUtilizationDetails()">
+                    <div class="card-body d-flex align-items-center">
+                        <div class="flex-grow-1">
+                            <p class="metric-value text-success" id="overall-utilization">--</p>
+                            <p class="metric-label">端口使用率</p>
+                        </div>
+                        <div class="text-success">
+                            <i class="fas fa-chart-pie fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card analytics-card idle" onclick="showIdleDetails()">
+                    <div class="card-body d-flex align-items-center">
+                        <div class="flex-grow-1">
+                            <p class="metric-value text-warning" id="overall-idle">--</p>
+                            <p class="metric-label">端口空闲率</p>
+                        </div>
+                        <div class="text-warning">
+                            <i class="fas fa-battery-half fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-3 mb-3">
+                <div class="card analytics-card summary" onclick="refreshDashboard()">
+                    <div class="card-body d-flex align-items-center">
+                        <div class="flex-grow-1">
+                            <p class="metric-value text-primary" id="total-devices">--</p>
+                            <p class="metric-label">设备总数</p>
+                        </div>
+                        <div class="text-primary">
+                            <i class="fas fa-cubes fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图表分析区域 -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-chart-bar me-2"></i>设备类型使用率分布</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="deviceTypeChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-chart-pie me-2"></i>站点使用率分布</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="siteChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 详细数据表格区域 -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-table me-2"></i>详细统计数据</h5>
+                        <div>
+                            <button class="btn btn-outline-primary btn-sm me-2" onclick="exportAnalyticsData()">
+                                <i class="fas fa-download me-1"></i>导出数据
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="refreshAnalytics()">
+                                <i class="fas fa-sync-alt me-1"></i>刷新
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- 标签页导航 -->
+                        <ul class="nav nav-tabs" id="analyticsTab" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="device-stats-tab" data-bs-toggle="tab" data-bs-target="#device-stats" type="button" role="tab">
+                                    <i class="fas fa-server me-1"></i>按设备类型统计
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="site-stats-tab" data-bs-toggle="tab" data-bs-target="#site-stats" type="button" role="tab">
+                                    <i class="fas fa-map-marker-alt me-1"></i>按站点统计
+                                </button>
+                            </li>
+
+                        </ul>
+                        
+                        <!-- 标签页内容 -->
+                        <div class="tab-content" id="analyticsTabContent">
+                            <!-- 按设备类型统计 -->
+                            <div class="tab-pane fade show active" id="device-stats" role="tabpanel">
+                                <div class="table-responsive mt-3">
+                                    <table class="table table-striped data-table">
+                                        <thead class="table-dark">
+                                            <tr>
+                                                <th>设备类型</th>
+                                                <th>设备数量</th>
+                                                <th>端口总数</th>
+                                                <th>已使用端口</th>
+                                                <th>空闲端口</th>
+                                                <th>使用率</th>
+                                                <th>空闲率</th>
+                                                <th>状态</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="device-stats-tbody">
+                                            <tr>
+                                                <td colspan="8" class="text-center text-muted">加载中...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            
+                            <!-- 按站点统计 -->
+                            <div class="tab-pane fade" id="site-stats" role="tabpanel">
+                                <div class="table-responsive mt-3">
+                                    <table class="table table-striped data-table">
+                                        <thead class="table-dark">
+                                            <tr>
+                                                <th>站点</th>
+                                                <th>设备数量</th>
+                                                <th>端口总数</th>
+                                                <th>已使用端口</th>
+                                                <th>空闲端口</th>
+                                                <th>使用率</th>
+                                                <th>空闲率</th>
+                                                <th>状态</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="site-stats-tbody">
+                                            <tr>
+                                                <td colspan="8" class="text-center text-muted">加载中...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            
+
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="/static/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // 统计分析管理器类
+        class AnalyticsManager {
+            constructor() {
+                this.charts = {};
+                this.data = {};
+                this.init();
+            }
+
+            // 初始化
+            init() {
+                this.loadDashboardData();
+                this.initCharts();
+            }
+
+            // 加载仪表板数据
+            async loadDashboardData() {
+                try {
+                    const response = await fetch('/api/analytics/summary-dashboard');
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.data.dashboard = result.data;
+                        this.updateDashboardCards();
+                    } else {
+                        console.error('获取仪表板数据失败:', result.message);
+                    }
+                } catch (error) {
+                    console.error('加载仪表板数据失败:', error);
+                }
+            }
+
+            // 更新仪表板卡片
+            updateDashboardCards() {
+                const data = this.data.dashboard;
+                if (!data) return;
+
+                // 从key_metrics中获取数据
+                const keyMetrics = data.key_metrics || {};
+
+                // 更新关键指标
+                document.getElementById('overall-utilization').textContent = 
+                    keyMetrics.overall_utilization_rate !== undefined ? `${keyMetrics.overall_utilization_rate.toFixed(1)}%` : '--';
+                document.getElementById('overall-idle').textContent = 
+                    keyMetrics.overall_idle_rate !== undefined ? `${keyMetrics.overall_idle_rate.toFixed(1)}%` : '--';
+
+                document.getElementById('total-devices').textContent = 
+                    keyMetrics.total_devices || '--';
+            }
+
+            // 初始化图表
+            initCharts() {
+                this.initDeviceTypeChart();
+                this.initSiteChart();
+            }
+
+            // 初始化设备类型图表
+            initDeviceTypeChart() {
+                const ctx = document.getElementById('deviceTypeChart').getContext('2d');
+                this.charts.deviceType = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: '使用率 (%)',
+                            data: [],
+                            backgroundColor: 'rgba(40, 167, 69, 0.8)',
+                            borderColor: 'rgba(40, 167, 69, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100,
+                                ticks: {
+                                    callback: function(value) {
+                                        return value + '%';
+                                    }
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 初始化站点图表
+            initSiteChart() {
+                const ctx = document.getElementById('siteChart').getContext('2d');
+                this.charts.site = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            data: [],
+                            backgroundColor: [
+                                '#FF6384',
+                                '#36A2EB',
+                                '#FFCE56',
+                                '#4BC0C0',
+                                '#9966FF',
+                                '#FF9F40'
+                            ]
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom'
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 加载使用率数据
+            async loadUtilizationData() {
+                try {
+                    const response = await fetch('/api/analytics/utilization-rates');
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        this.data.utilization = result.data;
+                        this.updateUtilizationCharts();
+                        this.updateDeviceStatsTable();
+                        this.updateSiteStatsTable();
+                    }
+                } catch (error) {
+                    console.error('加载使用率数据失败:', error);
+                }
+            }
+
+            // 更新使用率图表
+            updateUtilizationCharts() {
+                const data = this.data.utilization;
+                if (!data) return;
+
+                // 更新设备类型图表
+                if (data.device_type_utilization && this.charts.deviceType) {
+                    const labels = data.device_type_utilization.map(item => item.device_type);
+                    const values = data.device_type_utilization.map(item => item.utilization_rate);
+                    
+                    this.charts.deviceType.data.labels = labels;
+                    this.charts.deviceType.data.datasets[0].data = values;
+                    this.charts.deviceType.update();
+                }
+
+                // 更新站点图表
+                if (data.station_utilization && this.charts.site) {
+                    const labels = data.station_utilization.map(item => item.station);
+                    const values = data.station_utilization.map(item => item.utilization_rate);
+                    
+                    this.charts.site.data.labels = labels;
+                    this.charts.site.data.datasets[0].data = values;
+                    this.charts.site.update();
+                }
+            }
+
+            // 更新设备统计表格
+            updateDeviceStatsTable() {
+                const tbody = document.getElementById('device-stats-tbody');
+                const data = this.data.utilization;
+                
+                if (!data || !data.device_type_utilization) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无数据</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = '';
+                data.device_type_utilization.forEach(item => {
+                    const row = document.createElement('tr');
+                    const statusClass = this.getStatusClass(item.utilization_rate);
+                    const statusText = this.getStatusText(item.utilization_rate);
+                    
+                    row.innerHTML = `
+                        <td>${item.device_type}</td>
+                        <td>${item.device_count}</td>
+                        <td>${item.total_ports}</td>
+                        <td>${item.connected_ports}</td>
+                        <td>${item.idle_ports}</td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div class="progress progress-custom flex-grow-1 me-2">
+                                    <div class="progress-bar bg-success" style="width: ${item.utilization_rate}%"></div>
+                                </div>
+                                <span class="text-nowrap">${item.utilization_rate.toFixed(1)}%</span>
+                            </div>
+                        </td>
+                        <td>${(100 - item.utilization_rate).toFixed(1)}%</td>
+                        <td><span class="badge ${statusClass}">${statusText}</span></td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+
+            // 更新站点统计表格
+            updateSiteStatsTable() {
+                const tbody = document.getElementById('site-stats-tbody');
+                const data = this.data.utilization;
+                
+                if (!data || !data.station_utilization) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">暂无数据</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = '';
+                data.station_utilization.forEach(item => {
+                    const row = document.createElement('tr');
+                    const statusClass = this.getStatusClass(item.utilization_rate);
+                    const statusText = this.getStatusText(item.utilization_rate);
+                    
+                    row.innerHTML = `
+                        <td>${item.station}</td>
+                        <td>${item.device_count}</td>
+                        <td>${item.total_ports}</td>
+                        <td>${item.connected_ports}</td>
+                        <td>${item.idle_ports}</td>
+                        <td>
+                            <div class="d-flex align-items-center">
+                                <div class="progress progress-custom flex-grow-1 me-2">
+                                    <div class="progress-bar bg-success" style="width: ${item.utilization_rate}%"></div>
+                                </div>
+                                <span class="text-nowrap">${item.utilization_rate.toFixed(1)}%</span>
+                            </div>
+                        </td>
+                        <td>${(100 - item.utilization_rate).toFixed(1)}%</td>
+                        <td><span class="badge ${statusClass}">${statusText}</span></td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+
+
+
+
+
+            // 获取状态样式类
+            getStatusClass(rate) {
+                if (rate >= 80) return 'bg-danger';
+                if (rate >= 60) return 'bg-warning';
+                return 'bg-success';
+            }
+
+            // 获取状态文本
+            getStatusText(rate) {
+                if (rate >= 80) return '高负载';
+                if (rate >= 60) return '中负载';
+                return '正常';
+            }
+
+
+
+            // 刷新所有数据
+            async refreshAll() {
+                await this.loadDashboardData();
+                await this.loadUtilizationData();
+            }
+        }
+
+        // 创建统计分析管理器实例
+        const analyticsManager = new AnalyticsManager();
+
+        // 页面交互函数
+        function showUtilizationDetails() {
+            // 切换到设备类型统计标签页
+            const tab = new bootstrap.Tab(document.getElementById('device-stats-tab'));
+            tab.show();
+            analyticsManager.loadUtilizationData();
+        }
+
+        function showIdleDetails() {
+            // 切换到站点统计标签页
+            const tab = new bootstrap.Tab(document.getElementById('site-stats-tab'));
+            tab.show();
+            analyticsManager.loadUtilizationData();
+        }
+
+
+
+        function refreshDashboard() {
+            analyticsManager.loadDashboardData();
+        }
+
+        function refreshAnalytics() {
+            analyticsManager.refreshAll();
+        }
+
+        function exportAnalyticsData() {
+            // 导出功能实现
+            alert('导出功能开发中，敬请期待...');
+        }
+
+        // 页面加载完成后初始化数据
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始化页面并加载仪表板数据
+            console.log('Analytics page loaded');
+            
+            // 立即加载仪表板数据
+            analyticsManager.loadDashboardData();
+            
+            // 延迟加载详细数据
+            setTimeout(() => {
+                analyticsManager.loadUtilizationData();
+                analyticsManager.loadCapacityData();
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

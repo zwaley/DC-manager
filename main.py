@@ -34,6 +34,596 @@ class PortStatisticsService:
     def __init__(self, db: Session):
         self.db = db
     
+    def _get_device_port_summary(self) -> dict:
+        """获取设备端口总览 - 采用集合统计逻辑，统计所有有连接的端口"""
+        try:
+            # 统计总设备数
+            total_devices = self.db.query(Device).count()
+            
+            # 使用集合来避免重复计算同一个端口
+            all_ports = set()
+            connected_ports = set()
+            
+            # 获取所有连接记录
+            connections = self.db.query(Connection).all()
+            
+            for conn in connections:
+                # 统计源端口（A端）
+                if conn.source_fuse_number and conn.source_device_id:
+                    port_key = f"device_{conn.source_device_id}_fuse_{conn.source_fuse_number}"
+                    all_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_ports.add(port_key)
+                        
+                if conn.source_breaker_number and conn.source_device_id:
+                    port_key = f"device_{conn.source_device_id}_breaker_{conn.source_breaker_number}"
+                    all_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_ports.add(port_key)
+                
+                # 统计目标端口（B端）- 符合设计文档中"一个连接占用两个端口"的要求
+                if conn.target_fuse_number and conn.target_device_id:
+                    port_key = f"device_{conn.target_device_id}_fuse_{conn.target_fuse_number}"
+                    all_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_ports.add(port_key)
+                        
+                if conn.target_breaker_number and conn.target_device_id:
+                    port_key = f"device_{conn.target_device_id}_breaker_{conn.target_breaker_number}"
+                    all_ports.add(port_key)
+                    # 通过连接类型字段是否为空判断端口使用状态
+                    if conn.connection_type and conn.connection_type.strip():
+                        connected_ports.add(port_key)
+            
+            total_ports = len(all_ports)
+            connected_count = len(connected_ports)
+            idle_ports = total_ports - connected_count
+            utilization_rate = (connected_count / total_ports * 100) if total_ports > 0 else 0
+            
+            return {
+                "total_devices": total_devices,
+                "total_ports": total_ports,
+                "connected_ports": connected_count,
+                "idle_ports": idle_ports,
+                "utilization_rate": round(utilization_rate, 2)
+            }
+        except Exception as e:
+            print(f"获取设备端口总览时出错: {e}")
+            return {
+                "total_devices": 0,
+                "total_ports": 0,
+                "connected_ports": 0,
+                "idle_ports": 0,
+                "utilization_rate": 0
+            }
+    
+
+
+
+class AnalyticsService:
+    """统计分析服务类，用于处理高级统计分析功能"""
+    
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def get_utilization_rates(self) -> dict:
+        """获取使用率分析数据"""
+        try:
+            # 1. 端口总体使用率
+            overall_utilization = self._calculate_overall_utilization()
+            
+            # 2. 按设备类型统计使用率
+            device_type_utilization = self._calculate_device_type_utilization()
+            
+            # 3. 按站点统计使用率
+            station_utilization = self._calculate_station_utilization()
+            
+            return {
+                "overall_utilization": overall_utilization,
+                "device_type_utilization": device_type_utilization,
+                "station_utilization": station_utilization
+            }
+        except Exception as e:
+            print(f"获取使用率分析数据时出错: {e}")
+            raise HTTPException(status_code=500, detail=f"获取使用率分析失败: {str(e)}")
+    
+    def get_idle_rates(self) -> dict:
+        """获取空闲率分析数据"""
+        try:
+            # 1. 端口总体空闲率
+            overall_idle = self._calculate_overall_idle_rate()
+            
+            # 2. 按设备类型统计空闲率
+            device_type_idle = self._calculate_device_type_idle_rate()
+            
+            # 3. 按站点统计空闲率
+            station_idle = self._calculate_station_idle_rate()
+            
+            # 4. 空闲资源预警
+            idle_alerts = self._check_idle_rate_alerts()
+            
+            return {
+                "overall_idle_rate": overall_idle,
+                "device_type_idle_rate": device_type_idle,
+                "station_idle_rate": station_idle,
+                "idle_alerts": idle_alerts
+            }
+        except Exception as e:
+            print(f"获取空闲率分析数据时出错: {e}")
+            raise HTTPException(status_code=500, detail=f"获取空闲率分析失败: {str(e)}")
+    
+
+    
+    def get_summary_dashboard(self) -> dict:
+        """获取仪表板汇总数据"""
+        try:
+            # 获取关键指标
+            utilization_data = self.get_utilization_rates()
+            idle_data = self.get_idle_rates()
+            
+            # 构建仪表板数据
+            dashboard_data = {
+                "key_metrics": {
+                    "overall_utilization_rate": utilization_data["overall_utilization"]["utilization_rate"],
+                    "overall_idle_rate": idle_data["overall_idle_rate"]["idle_rate"],
+                    "total_devices": utilization_data["overall_utilization"]["total_devices"],
+                    "total_ports": utilization_data["overall_utilization"]["total_ports"],
+                    "connected_ports": utilization_data["overall_utilization"]["connected_ports"],
+                    "idle_ports": idle_data["overall_idle_rate"]["idle_ports"]
+                },
+                "alerts": idle_data["idle_alerts"],
+                "top_utilized_devices": self._get_top_utilized_devices(),
+                "distribution_charts": {
+                    "device_type_utilization": utilization_data["device_type_utilization"],
+                    "station_utilization": utilization_data["station_utilization"]
+                }
+            }
+            
+            return dashboard_data
+        except Exception as e:
+            print(f"获取仪表板汇总数据时出错: {e}")
+            raise HTTPException(status_code=500, detail=f"获取仪表板汇总数据失败: {str(e)}")
+    
+    def _calculate_overall_utilization(self) -> dict:
+        """计算端口总体使用率"""
+        # 使用现有的PortStatisticsService逻辑
+        port_service = PortStatisticsService(self.db)
+        summary = port_service._get_device_port_summary()
+        
+        return {
+            "total_devices": summary["total_devices"],
+            "total_ports": summary["total_ports"],
+            "connected_ports": summary["connected_ports"],
+            "utilization_rate": summary["utilization_rate"]
+        }
+    
+    def _calculate_device_type_utilization(self) -> list:
+        """按设备类型计算使用率"""
+        try:
+            # 获取所有设备类型
+            device_types = self.db.query(Device.device_type).distinct().all()
+            device_type_stats = []
+            
+            for device_type_tuple in device_types:
+                device_type = device_type_tuple[0] or "未知类型"
+                
+                # 获取该类型的所有设备
+                devices = self.db.query(Device).filter(Device.device_type == device_type_tuple[0]).all()
+                device_ids = [d.id for d in devices]
+                
+                if not device_ids:
+                    continue
+                
+                # 统计该类型设备的端口使用情况
+                all_ports = set()
+                connected_ports = set()
+                
+                connections = self.db.query(Connection).filter(
+                    (Connection.source_device_id.in_(device_ids)) |
+                    (Connection.target_device_id.in_(device_ids))
+                ).all()
+                
+                for conn in connections:
+                    # 统计源端口
+                    if conn.source_device_id in device_ids:
+                        if conn.source_fuse_number:
+                            port_key = f"device_{conn.source_device_id}_fuse_{conn.source_fuse_number}"
+                            all_ports.add(port_key)
+                            if conn.connection_type and conn.connection_type.strip():
+                                connected_ports.add(port_key)
+                        if conn.source_breaker_number:
+                            port_key = f"device_{conn.source_device_id}_breaker_{conn.source_breaker_number}"
+                            all_ports.add(port_key)
+                            if conn.connection_type and conn.connection_type.strip():
+                                connected_ports.add(port_key)
+                    
+                    # 统计目标端口
+                    if conn.target_device_id in device_ids:
+                        if conn.target_fuse_number:
+                            port_key = f"device_{conn.target_device_id}_fuse_{conn.target_fuse_number}"
+                            all_ports.add(port_key)
+                            if conn.connection_type and conn.connection_type.strip():
+                                connected_ports.add(port_key)
+                        if conn.target_breaker_number:
+                            port_key = f"device_{conn.target_device_id}_breaker_{conn.target_breaker_number}"
+                            all_ports.add(port_key)
+                            if conn.connection_type and conn.connection_type.strip():
+                                connected_ports.add(port_key)
+                
+                total_ports = len(all_ports)
+                connected_count = len(connected_ports)
+                utilization_rate = (connected_count / total_ports * 100) if total_ports > 0 else 0
+                
+                device_type_stats.append({
+                    "device_type": device_type,
+                    "device_count": len(devices),
+                    "total_ports": total_ports,
+                    "connected_ports": connected_count,
+                    "idle_ports": total_ports - connected_count,
+                    "utilization_rate": round(utilization_rate, 2)
+                })
+            
+            # 按使用率降序排序
+            device_type_stats.sort(key=lambda x: x["utilization_rate"], reverse=True)
+            return device_type_stats
+            
+        except Exception as e:
+            print(f"计算设备类型使用率时出错: {e}")
+            return []
+    
+    def _calculate_station_utilization(self) -> list:
+        """按站点计算使用率"""
+        try:
+            # 获取所有站点
+            stations = self.db.query(Device.station).distinct().all()
+            station_stats = []
+            
+            for station_tuple in stations:
+                station = station_tuple[0] or "未知站点"
+                
+                # 获取该站点的所有设备
+                devices = self.db.query(Device).filter(Device.station == station_tuple[0]).all()
+                device_ids = [d.id for d in devices]
+                
+                if not device_ids:
+                    continue
+                
+                # 统计该站点设备的端口使用情况
+                all_ports = set()
+                connected_ports = set()
+                
+                connections = self.db.query(Connection).filter(
+                    (Connection.source_device_id.in_(device_ids)) |
+                    (Connection.target_device_id.in_(device_ids))
+                ).all()
+                
+                for conn in connections:
+                    # 统计源端口
+                    if conn.source_device_id in device_ids:
+                        if conn.source_fuse_number:
+                            port_key = f"device_{conn.source_device_id}_fuse_{conn.source_fuse_number}"
+                            all_ports.add(port_key)
+                            if conn.connection_type and conn.connection_type.strip():
+                                connected_ports.add(port_key)
+                        if conn.source_breaker_number:
+                            port_key = f"device_{conn.source_device_id}_breaker_{conn.source_breaker_number}"
+                            all_ports.add(port_key)
+                            if conn.connection_type and conn.connection_type.strip():
+                                connected_ports.add(port_key)
+                    
+                    # 统计目标端口
+                    if conn.target_device_id in device_ids:
+                        if conn.target_fuse_number:
+                            port_key = f"device_{conn.target_device_id}_fuse_{conn.target_fuse_number}"
+                            all_ports.add(port_key)
+                            if conn.connection_type and conn.connection_type.strip():
+                                connected_ports.add(port_key)
+                        if conn.target_breaker_number:
+                            port_key = f"device_{conn.target_device_id}_breaker_{conn.target_breaker_number}"
+                            all_ports.add(port_key)
+                            if conn.connection_type and conn.connection_type.strip():
+                                connected_ports.add(port_key)
+                
+                total_ports = len(all_ports)
+                connected_count = len(connected_ports)
+                utilization_rate = (connected_count / total_ports * 100) if total_ports > 0 else 0
+                
+                station_stats.append({
+                    "station": station,
+                    "device_count": len(devices),
+                    "total_ports": total_ports,
+                    "connected_ports": connected_count,
+                    "idle_ports": total_ports - connected_count,
+                    "utilization_rate": round(utilization_rate, 2)
+                })
+            
+            # 按使用率降序排序
+            station_stats.sort(key=lambda x: x["utilization_rate"], reverse=True)
+            return station_stats
+            
+        except Exception as e:
+            print(f"计算站点使用率时出错: {e}")
+            return []
+    
+    def _calculate_overall_idle_rate(self) -> dict:
+        """计算端口总体空闲率"""
+        overall_utilization = self._calculate_overall_utilization()
+        total_ports = overall_utilization["total_ports"]
+        connected_ports = overall_utilization["connected_ports"]
+        idle_ports = total_ports - connected_ports
+        idle_rate = (idle_ports / total_ports * 100) if total_ports > 0 else 0
+        
+        return {
+            "total_ports": total_ports,
+            "idle_ports": idle_ports,
+            "connected_ports": connected_ports,
+            "idle_rate": round(idle_rate, 2)
+        }
+    
+    def _calculate_device_type_idle_rate(self) -> list:
+        """按设备类型计算空闲率"""
+        device_type_utilization = self._calculate_device_type_utilization()
+        
+        for item in device_type_utilization:
+            idle_rate = 100 - item["utilization_rate"]
+            item["idle_rate"] = round(idle_rate, 2)
+        
+        # 按空闲率降序排序
+        device_type_utilization.sort(key=lambda x: x["idle_rate"], reverse=True)
+        return device_type_utilization
+    
+    def _calculate_station_idle_rate(self) -> list:
+        """按站点计算空闲率"""
+        station_utilization = self._calculate_station_utilization()
+        
+        for item in station_utilization:
+            idle_rate = 100 - item["utilization_rate"]
+            item["idle_rate"] = round(idle_rate, 2)
+        
+        # 按空闲率降序排序
+        station_utilization.sort(key=lambda x: x["idle_rate"], reverse=True)
+        return station_utilization
+    
+    def _check_idle_rate_alerts(self) -> list:
+        """检查空闲率预警"""
+        alerts = []
+        
+        # 检查总体空闲率
+        overall_idle = self._calculate_overall_idle_rate()
+        if overall_idle["idle_rate"] < 10:  # 空闲率低于10%预警
+            alerts.append({
+                "type": "overall",
+                "level": "warning",
+                "message": f"系统总体空闲率仅为 {overall_idle['idle_rate']}%，资源紧张",
+                "idle_rate": overall_idle["idle_rate"]
+            })
+        
+        # 检查设备类型空闲率
+        device_type_idle = self._calculate_device_type_idle_rate()
+        for item in device_type_idle:
+            if item["idle_rate"] < 5:  # 设备类型空闲率低于5%预警
+                alerts.append({
+                    "type": "device_type",
+                    "level": "critical",
+                    "message": f"{item['device_type']} 类型设备空闲率仅为 {item['idle_rate']}%，急需扩容",
+                    "device_type": item["device_type"],
+                    "idle_rate": item["idle_rate"]
+                })
+        
+        # 检查站点空闲率
+        station_idle = self._calculate_station_idle_rate()
+        for item in station_idle:
+            if item["idle_rate"] < 5:  # 站点空闲率低于5%预警
+                alerts.append({
+                    "type": "station",
+                    "level": "critical",
+                    "message": f"{item['station']} 站点空闲率仅为 {item['idle_rate']}%，急需扩容",
+                    "station": item["station"],
+                    "idle_rate": item["idle_rate"]
+                })
+        
+        return alerts
+    
+
+    
+    def _calculate_port_capacity_distribution(self) -> dict:
+        """计算端口容量分布"""
+        try:
+            # 统计不同规格端口的使用分布
+            connections = self.db.query(Connection).all()
+            
+            fuse_specs = {}
+            breaker_specs = {}
+            
+            for conn in connections:
+                # 统计熔断器规格分布
+                if conn.source_fuse_spec:
+                    spec = conn.source_fuse_spec
+                    if spec not in fuse_specs:
+                        fuse_specs[spec] = {"total": 0, "connected": 0}
+                    fuse_specs[spec]["total"] += 1
+                    if conn.connection_type and conn.connection_type.strip():
+                        fuse_specs[spec]["connected"] += 1
+                
+                if conn.target_fuse_spec:
+                    spec = conn.target_fuse_spec
+                    if spec not in fuse_specs:
+                        fuse_specs[spec] = {"total": 0, "connected": 0}
+                    fuse_specs[spec]["total"] += 1
+                    if conn.connection_type and conn.connection_type.strip():
+                        fuse_specs[spec]["connected"] += 1
+                
+                # 统计空开规格分布
+                if conn.source_breaker_spec:
+                    spec = conn.source_breaker_spec
+                    if spec not in breaker_specs:
+                        breaker_specs[spec] = {"total": 0, "connected": 0}
+                    breaker_specs[spec]["total"] += 1
+                    if conn.connection_type and conn.connection_type.strip():
+                        breaker_specs[spec]["connected"] += 1
+                
+                if conn.target_breaker_spec:
+                    spec = conn.target_breaker_spec
+                    if spec not in breaker_specs:
+                        breaker_specs[spec] = {"total": 0, "connected": 0}
+                    breaker_specs[spec]["total"] += 1
+                    if conn.connection_type and conn.connection_type.strip():
+                        breaker_specs[spec]["connected"] += 1
+            
+            # 计算各规格的使用率
+            for spec_data in fuse_specs.values():
+                spec_data["utilization_rate"] = round(
+                    (spec_data["connected"] / spec_data["total"] * 100) if spec_data["total"] > 0 else 0, 2
+                )
+            
+            for spec_data in breaker_specs.values():
+                spec_data["utilization_rate"] = round(
+                    (spec_data["connected"] / spec_data["total"] * 100) if spec_data["total"] > 0 else 0, 2
+                )
+            
+            return {
+                "fuse_specifications": fuse_specs,
+                "breaker_specifications": breaker_specs
+            }
+            
+        except Exception as e:
+            print(f"计算端口容量分布时出错: {e}")
+            return {
+                "fuse_specifications": {},
+                "breaker_specifications": {}
+            }
+    
+    def _calculate_load_balance_analysis(self) -> dict:
+        """计算负载均衡分析"""
+        try:
+            # 获取所有设备的使用率
+            devices = self.db.query(Device).all()
+            device_utilizations = []
+            
+            for device in devices:
+                utilization_rate = self._get_device_utilization_rate(device.id)
+                device_utilizations.append({
+                    "device_id": device.id,
+                    "device_name": device.name,
+                    "device_type": device.device_type or "未知",
+                    "station": device.station or "未知",
+                    "utilization_rate": utilization_rate
+                })
+            
+            if not device_utilizations:
+                return {
+                    "balance_score": 0,
+                    "average_utilization": 0,
+                    "utilization_variance": 0,
+                    "overloaded_devices": [],
+                    "underutilized_devices": []
+                }
+            
+            # 计算平均使用率和方差
+            utilization_rates = [d["utilization_rate"] for d in device_utilizations]
+            average_utilization = sum(utilization_rates) / len(utilization_rates)
+            variance = sum((rate - average_utilization) ** 2 for rate in utilization_rates) / len(utilization_rates)
+            
+            # 负载均衡评分（方差越小，均衡性越好）
+            balance_score = max(0, 100 - variance)  # 简化的评分算法
+            
+            # 识别过载和低利用率设备
+            overloaded_devices = [d for d in device_utilizations if d["utilization_rate"] > 90]
+            underutilized_devices = [d for d in device_utilizations if d["utilization_rate"] < 20]
+            
+            return {
+                "balance_score": round(balance_score, 2),
+                "average_utilization": round(average_utilization, 2),
+                "utilization_variance": round(variance, 2),
+                "overloaded_devices": overloaded_devices,
+                "underutilized_devices": underutilized_devices
+            }
+            
+        except Exception as e:
+            print(f"计算负载均衡分析时出错: {e}")
+            return {
+                "balance_score": 0,
+                "average_utilization": 0,
+                "utilization_variance": 0,
+                "overloaded_devices": [],
+                "underutilized_devices": []
+            }
+    
+    def _get_top_utilized_devices(self, limit: int = 10) -> list:
+        """获取使用率最高的设备"""
+        try:
+            devices = self.db.query(Device).all()
+            device_utilizations = []
+            
+            for device in devices:
+                utilization_rate = self._get_device_utilization_rate(device.id)
+                device_utilizations.append({
+                    "device_id": device.id,
+                    "device_name": device.name,
+                    "device_type": device.device_type or "未知",
+                    "station": device.station or "未知",
+                    "utilization_rate": utilization_rate
+                })
+            
+            # 按使用率降序排序并返回前N个
+            device_utilizations.sort(key=lambda x: x["utilization_rate"], reverse=True)
+            return device_utilizations[:limit]
+            
+        except Exception as e:
+            print(f"获取使用率最高设备时出错: {e}")
+            return []
+    
+    def _get_device_utilization_rate(self, device_id: int) -> float:
+        """获取单个设备的使用率"""
+        try:
+            # 获取设备的所有端口
+            connections = self.db.query(Connection).filter(
+                (Connection.source_device_id == device_id) |
+                (Connection.target_device_id == device_id)
+            ).all()
+            
+            all_ports = set()
+            connected_ports = set()
+            
+            for conn in connections:
+                if conn.source_device_id == device_id:
+                    if conn.source_fuse_number:
+                        port_key = f"fuse_{conn.source_fuse_number}"
+                        all_ports.add(port_key)
+                        if conn.connection_type and conn.connection_type.strip():
+                            connected_ports.add(port_key)
+                    if conn.source_breaker_number:
+                        port_key = f"breaker_{conn.source_breaker_number}"
+                        all_ports.add(port_key)
+                        if conn.connection_type and conn.connection_type.strip():
+                            connected_ports.add(port_key)
+                
+                if conn.target_device_id == device_id:
+                    if conn.target_fuse_number:
+                        port_key = f"fuse_{conn.target_fuse_number}"
+                        all_ports.add(port_key)
+                        if conn.connection_type and conn.connection_type.strip():
+                            connected_ports.add(port_key)
+                    if conn.target_breaker_number:
+                        port_key = f"breaker_{conn.target_breaker_number}"
+                        all_ports.add(port_key)
+                        if conn.connection_type and conn.connection_type.strip():
+                            connected_ports.add(port_key)
+            
+            total_ports = len(all_ports)
+            connected_count = len(connected_ports)
+            
+            return (connected_count / total_ports * 100) if total_ports > 0 else 0
+            
+        except Exception as e:
+            print(f"获取设备 {device_id} 使用率时出错: {e}")
+            return 0
+    
+
+    
     def get_port_statistics(self) -> dict:
         """获取全局端口统计信息"""
         try:
@@ -1985,6 +2575,24 @@ async def connections_page(request: Request):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/analytics", response_class=HTMLResponse)
+async def analytics_page(request: Request):
+    """
+    统计分析页面
+    """
+    print("=== 访问统计分析页面 ===")
+    print(f"请求URL: {request.url}")
+    print(f"请求方法: {request.method}")
+    try:
+        print("正在渲染统计分析模板...")
+        response = templates.TemplateResponse("analytics.html", {"request": request})
+        print("统计分析模板渲染成功")
+        return response
+    except Exception as e:
+        print(f"统计分析页面错误: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/export")
 async def export_devices(
     password: str = Form(...),
@@ -2417,6 +3025,83 @@ async def get_device_port_details(device_id: int, db: Session = Depends(get_db))
         print(f"获取设备端口详情失败: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"获取设备端口详情失败: {str(e)}")
+
+
+# ==================== 统计分析API端点 ====================
+
+@app.get("/api/analytics/utilization-rates")
+async def get_utilization_rates(db: Session = Depends(get_db)):
+    """
+    获取使用率分析数据
+    包括端口总体使用率、按设备类型统计、按站点统计等
+    """
+    try:
+        # 创建统计分析服务实例
+        analytics_service = AnalyticsService(db)
+        
+        # 获取使用率分析数据
+        utilization_data = analytics_service.get_utilization_rates()
+        
+        return JSONResponse(content={
+            "success": True,
+            "data": utilization_data
+        })
+        
+    except Exception as e:
+        print(f"获取使用率分析数据失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取使用率分析数据失败: {str(e)}")
+
+
+@app.get("/api/analytics/idle-rates")
+async def get_idle_rates(db: Session = Depends(get_db)):
+    """
+    获取空闲率分析数据
+    包括端口总体空闲率、按设备类型统计、按站点统计、空闲率预警等
+    """
+    try:
+        # 创建统计分析服务实例
+        analytics_service = AnalyticsService(db)
+        
+        # 获取空闲率分析数据
+        idle_data = analytics_service.get_idle_rates()
+        
+        return JSONResponse(content={
+            "success": True,
+            "data": idle_data
+        })
+        
+    except Exception as e:
+        print(f"获取空闲率分析数据失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取空闲率分析数据失败: {str(e)}")
+
+
+
+
+
+@app.get("/api/analytics/summary-dashboard")
+async def get_summary_dashboard(db: Session = Depends(get_db)):
+    """
+    获取仪表板汇总数据
+    包括所有关键指标的汇总信息，用于统计分析仪表板显示
+    """
+    try:
+        # 创建统计分析服务实例
+        analytics_service = AnalyticsService(db)
+        
+        # 获取仪表板汇总数据
+        dashboard_data = analytics_service.get_summary_dashboard()
+        
+        return JSONResponse(content={
+            "success": True,
+            "data": dashboard_data
+        })
+        
+    except Exception as e:
+        print(f"获取仪表板汇总数据失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取仪表板汇总数据失败: {str(e)}")
 
 
 # 辅助函数：根据熔丝/空开编号为端口名称添加前缀
