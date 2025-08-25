@@ -2474,6 +2474,9 @@ async def get_connections(
                         )
                     )
                 )
+            elif connection_type == "已使用总量":
+                # 筛选已使用总量：显示所有有连接类型的记录（非空闲）
+                query = query.filter(Connection.connection_type.isnot(None))
             else:
                 query = query.filter(Connection.connection_type.ilike(f"%{connection_type}%"))
         else:

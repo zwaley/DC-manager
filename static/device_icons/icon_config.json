@@ -1,0 +1,28 @@
+{
+  "icon_mapping": {
+    "UPS": "ups.svg",
+    "变压器": "transformer.svg",
+    "高压配电柜": "high_voltage_cabinet.svg",
+    "低压配电柜": "low_voltage_cabinet.svg",
+    "ATS柜": "ats_cabinet.svg",
+    "直流分配柜": "dc_distribution_cabinet.svg",
+    "直流操作屏": "dc_control_panel.svg",
+    "开关电源": "ups.svg",
+    "整流器": "ups.svg",
+    "逆变器": "ups.svg",
+    "配电箱": "low_voltage_cabinet.svg",
+    "控制柜": "dc_control_panel.svg"
+  },
+  "default_icon": "default_device.svg",
+  "icon_size": {
+    "width": 48,
+    "height": 48
+  },
+  "search_paths": [
+    "./device_icons/",
+    "./default_icons/"
+  ],
+  "supported_formats": ["svg", "png", "jpg", "jpeg"],
+  "fallback_color": "#666666",
+  "description": "设备图标配置文件 - 用户可以通过修改此文件来自定义设备图标映射关系"
+}

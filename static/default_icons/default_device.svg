@@ -1,0 +1,30 @@
+<svg width="48" height="48" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+  <!-- 默认设备图标 -->
+  <rect x="6" y="8" width="36" height="32" rx="4" fill="#666666" stroke="#424242" stroke-width="2"/>
+  
+  <!-- 设备面板 -->
+  <rect x="8" y="10" width="32" height="28" rx="2" fill="#757575" stroke="#424242" stroke-width="1"/>
+  
+  <!-- 通用设备标识 -->
+  <rect x="12" y="14" width="24" height="8" rx="2" fill="#424242" stroke="#212121" stroke-width="1"/>
+  <rect x="14" y="16" width="20" height="4" rx="1" fill="#333"/>
+  
+  <!-- 指示灯 -->
+  <circle cx="16" cy="28" r="2" fill="#4CAF50"/>
+  <circle cx="24" cy="28" r="2" fill="#FF9800"/>
+  <circle cx="32" cy="28" r="2" fill="#666"/>
+  
+  <!-- 端口/接口 -->
+  <rect x="10" y="34" width="4" height="2" rx="1" fill="#333"/>
+  <rect x="16" y="34" width="4" height="2" rx="1" fill="#333"/>
+  <rect x="22" y="34" width="4" height="2" rx="1" fill="#333"/>
+  <rect x="28" y="34" width="4" height="2" rx="1" fill="#333"/>
+  <rect x="34" y="34" width="4" height="2" rx="1" fill="#333"/>
+  
+  <!-- 设备标识 -->
+  <text x="24" y="20" text-anchor="middle" font-family="Arial" font-size="6" fill="#FFF">DEV</text>
+  
+  <!-- 问号标识（表示未知设备） -->
+  <circle cx="38" cy="12" r="4" fill="#FF9800" stroke="#F57C00" stroke-width="1"/>
+  <text x="38" y="15" text-anchor="middle" font-family="Arial" font-size="8" fill="#FFF" font-weight="bold">?</text>
+</svg>
