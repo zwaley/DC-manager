@@ -134,6 +134,8 @@ class Connection(Base):
     cable_specification = Column(String(100))  # 电缆规格（如：RVVZ-240mm²）
     parallel_count = Column(Integer, default=1)  # 并联数量（从备注解析）
     rated_current = Column(Float)  # 额定电流(A)（从熔丝/空开规格推导）
+    a_rated_current = Column(String(50))  # A端额定电流
+    b_rated_current = Column(String(50))  # B端额定电流
     cable_length = Column(Float)  # 电缆长度(m)
     
     # 附加信息 - 对应Excel字段16-18

@@ -1080,7 +1080,7 @@ def on_startup():
         create_db_and_tables()
         
         print("✅ 应用启动完成！")
-        print("🌐 服务器地址: http://localhost:8000")
+        print(f"🌐 服务器地址: http://localhost:{PORT}")
         print("=" * 60 + "\n")
         
     except Exception as e:
@@ -1379,6 +1379,12 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                     existing_device.commission_date = row.get("设备投产时间")
                     existing_device.remark = row.get("备注")
                     
+                    # 注意：以下机房相关字段被忽略（根据用户要求）：
+                    # - 机房名称
+                    # - 资源系统机房名称  
+                    # - 资源系统机房编码
+                    # - 机房等级
+                    
                     devices_map[asset_id] = existing_device
                     devices_updated_count += 1
                     print(f"  - 第 {index+2} 行：准备更新现有设备 '{device_name}' (资产编号: {asset_id}, 局站: {station})")
@@ -1395,6 +1401,11 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                         vendor=row.get("设备生产厂家"),
                         commission_date=row.get("设备投产时间"),
                         remark=row.get("备注")
+                        # 注意：以下机房相关字段被忽略（根据用户要求）：
+                        # - 机房名称
+                        # - 资源系统机房名称  
+                        # - 资源系统机房编码
+                        # - 机房等级
                     )
                     db.add(device)
                     devices_map[asset_id] = device
@@ -1710,6 +1721,9 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                             target_breaker_number=str(row.get('B端空开编号', '')).strip() if pd.notna(row.get('B端空开编号')) else None,
                             target_breaker_spec=str(row.get('空开规格', '')).strip() if pd.notna(row.get('空开规格')) else None,
                             target_device_location=str(row.get('B端设备位置（非动力设备）', '')).strip() if pd.notna(row.get('B端设备位置（非动力设备）')) else None,
+                            # 额定电流信息
+                            a_rated_current=str(row.get('A端额定电流', '')).strip() if pd.notna(row.get('A端额定电流')) else None,
+                            b_rated_current=str(row.get('B端额定电流', '')).strip() if pd.notna(row.get('B端额定电流')) else None,
                             # 连接信息
                             hierarchy_relation=str(row.get('上下级', '')).strip() if pd.notna(row.get('上下级')) else None,
                             upstream_downstream=str(row.get('上下游', '')).strip() if pd.notna(row.get('上下游')) else None,
@@ -3231,6 +3245,8 @@ async def get_connections(
                 "upstream_downstream": conn.upstream_downstream,
                 "parallel_count": conn.parallel_count,
                 "rated_current": conn.rated_current,
+                "a_rated_current": conn.a_rated_current,  # 添加A端额定电流字段
+                "b_rated_current": conn.b_rated_current,  # 添加B端额定电流字段
                 "cable_length": conn.cable_length,
                 "source_device_photo": conn.source_device_photo,
                 "target_device_photo": conn.target_device_photo,
@@ -3698,9 +3714,9 @@ async def get_connection(
 # --- 应用启动 ---
 if __name__ == "__main__":
     import uvicorn
-    print(f"\n🌐 服务器启动地址: http://localhost:{PORT}")
+    print(f"\n🌐 服务器启动地址: http://localhost:{PORT} 或 http://0.0.0.0:{PORT}")
     print(f"📊 管理界面: http://localhost:{PORT}")
     print(f"🔗 连接管理: http://localhost:{PORT}/connections")
     print(f"⚙️  生命周期管理: http://localhost:{PORT}/lifecycle-management")
-    print("=" * 60)
+    print(f"\n注意：应用程序实际运行在端口 {PORT}")
     uvicorn.run(app, host="0.0.0.0", port=PORT, reload=False)

@@ -1,32 +1,55 @@
 import pandas as pd
 
-# 读取Excel文件的所有sheet
-print('=== 读取Excel文件的所有sheet ===')
-xls = pd.ExcelFile('设备表.xlsx')
-print(f'Excel文件包含的sheet: {xls.sheet_names}')
+# 读取Excel文件
+df = pd.read_excel('设备表.xlsx')
 
-# 读取第一个sheet（设备表）
-print('\n=== Sheet 1: 设备表 ===')
-df1 = pd.read_excel('设备表.xlsx', sheet_name=0)
-print('设备表列名:')
-for i, col in enumerate(df1.columns.tolist()):
-    print(f'{i+1}. {col}')
-print(f'总共有 {len(df1.columns)} 列，{len(df1)} 行数据')
+print('Excel文件结构分析:')
+print('=' * 50)
 
-# 读取第二个sheet（连接表）
-if len(xls.sheet_names) > 1:
-    print('\n=== Sheet 2: 连接表 ===')
-    df2 = pd.read_excel('设备表.xlsx', sheet_name=1)
-    print('连接表列名:')
-    for i, col in enumerate(df2.columns.tolist()):
-        print(f'{i+1}. {col}')
-    print(f'总共有 {len(df2.columns)} 列，{len(df2)} 行数据')
+# 获取所有工作表名称
+excel_file = pd.ExcelFile('设备表.xlsx')
+print(f'工作表数量: {len(excel_file.sheet_names)}')
+print(f'工作表名称: {excel_file.sheet_names}')
+
+print('\n第一个工作表的列结构:')
+print('-' * 30)
+for i, col in enumerate(df.columns, 1):
+    print(f'{i:2d}. {col}')
+
+print(f'\n数据统计:')
+print(f'总列数: {len(df.columns)}')
+print(f'总行数: {len(df)}')
+
+print('\n前3行数据预览:')
+print('-' * 30)
+for i in range(min(3, len(df))):
+    print(f'\n第{i+1}行:')
+    for col in df.columns:
+        value = df.iloc[i][col]
+        if pd.isna(value):
+            value = 'NaN'
+        print(f'  {col}: {value}')
+
+# 检查是否有第二个工作表
+if len(excel_file.sheet_names) > 1:
+    print(f'\n\n第二个工作表 "{excel_file.sheet_names[1]}" 的结构:')
+    print('=' * 50)
+    df2 = pd.read_excel('设备表.xlsx', sheet_name=excel_file.sheet_names[1])
     
-    # 显示连接表的前几行数据样本
-    print('\n连接表前3行数据样本:')
+    print('列结构:')
+    for i, col in enumerate(df2.columns, 1):
+        print(f'{i:2d}. {col}')
+    
+    print(f'\n数据统计:')
+    print(f'总列数: {len(df2.columns)}')
+    print(f'总行数: {len(df2)}')
+    
+    print('\n前3行数据预览:')
+    print('-' * 30)
     for i in range(min(3, len(df2))):
         print(f'\n第{i+1}行:')
         for col in df2.columns:
-            print(f'  {col}: {df2.iloc[i][col]}')
-else:
-    print('\n没有找到第二个sheet（连接表）')
+            value = df2.iloc[i][col]
+            if pd.isna(value):
+                value = 'NaN'
+            print(f'  {col}: {value}')

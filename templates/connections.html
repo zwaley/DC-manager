@@ -835,10 +835,10 @@
                 const remarkText = conn.remark || '-';
                 const displayRemark = remarkText.length > 20 ? remarkText.substring(0, 20) + '...' : remarkText;
                 
-                // 提取A端额定电流（从熔丝或空开规格中提取数字）
-                const sourceRating = extractRatingFromSpec(conn.source_fuse_spec || conn.source_breaker_spec);
-                // 提取B端额定电流（从熔丝或空开规格中提取数字）
-                const targetRating = extractRatingFromSpec(conn.target_fuse_spec || conn.target_breaker_spec);
+                // 直接使用数据库中的A端和B端额定电流字段
+                const sourceRating = conn.a_rated_current || '-';
+                // 直接使用数据库中的B端额定电流字段
+                const targetRating = conn.b_rated_current || '-';
                 
                 row.innerHTML = `
                     <td>${conn.id}</td>
