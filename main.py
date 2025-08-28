@@ -25,6 +25,7 @@ from config import ADMIN_PASSWORD, PORT
 
 # 修正了导入，使用正确的函数名和模型
 from models import SessionLocal, Device, Connection, LifecycleRule, create_db_and_tables
+from device_types import validate_device_type, get_device_type_suggestions, STANDARD_DEVICE_TYPES
 
 # --- 端口统计服务类 ---
 
@@ -1367,12 +1368,34 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                     skipped_rows.append((index+2, skip_reason))
                     continue
                 
+                # 获取并验证设备类型
+                device_type = row.get("设备类型")
+                if isinstance(device_type, str):
+                    device_type = device_type.strip()
+                
+                # 验证设备类型是否在标准列表中
+                if device_type and device_type != 'nan' and device_type.lower() != 'none':
+                    if not validate_device_type(device_type):
+                        # 提供建议的设备类型
+                        suggestions = get_device_type_suggestions(device_type)
+                        if suggestions:
+                            suggestion_text = f"，建议使用: {', '.join(suggestions[:3])}"
+                        else:
+                            suggestion_text = ""
+                        skip_reason = f"设备类型 '{device_type}' 不在标准列表中{suggestion_text}"
+                        print(f"  - 第 {index+2} 行：跳过，{skip_reason}")
+                        skipped_rows.append((index+2, skip_reason))
+                        continue
+                else:
+                    # 如果设备类型为空，设置为"待确认"
+                    device_type = "待确认"
+                
                 if existing_device:
                     # 更新现有设备
                     existing_device.name = device_name
                     existing_device.station = station
                     existing_device.model = row.get("设备型号")
-                    existing_device.device_type = row.get("设备类型")
+                    existing_device.device_type = device_type  # 使用验证后的设备类型
                     existing_device.location = row.get("机房内空间位置")
                     existing_device.power_rating = row.get("设备额定容量")
                     existing_device.vendor = row.get("设备生产厂家")
@@ -1395,7 +1418,7 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                         name=device_name,
                         station=station,
                         model=row.get("设备型号"),
-                        device_type=row.get("设备类型"),
+                        device_type=device_type,  # 使用验证后的设备类型
                         location=row.get("机房内空间位置"),
                         power_rating=row.get("设备额定容量"),
                         vendor=row.get("设备生产厂家"),
@@ -1563,6 +1586,13 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                     'cable': 'cable',
                     'busbar': 'busbar',
                     'busway': 'busway',
+                    # 电气连接类型 - 根据实际Excel数据添加
+                    '直流': 'dc',
+                    '交流': 'ac',
+                    'DC': 'dc',
+                    'AC': 'ac',
+                    'dc': 'dc',
+                    'ac': 'ac',
                     # 空值的各种表示方式 - 统一映射为None表示空闲端口
                     '无': None,
                     '空': None,
@@ -1675,7 +1705,7 @@ async def upload_excel(file: UploadFile = File(...), password: str = Form(...), 
                         )
                         
                         # 处理连接类型 - 修复空闲端口被错误归类为电缆的问题
-                        connection_type_raw = row.get('连接类型（电缆 / 铜排 / 母线）')
+                        connection_type_raw = row.get('连接类型')  # 修正：使用实际Excel列名
                         if pd.isna(connection_type_raw) or str(connection_type_raw).strip() == '':
                             # 如果连接类型为空，说明是空闲端口，不设置连接类型
                             connection_type = None
@@ -2321,6 +2351,38 @@ async def get_devices_api(
         print(f"获取设备列表失败: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"获取设备列表失败: {str(e)}")
+
+
+@app.get("/api/topology/filter-options")
+async def get_filter_options(db: Session = Depends(get_db)):
+    """
+    获取拓扑图筛选选项
+    返回设备类型、连接类型、局站等筛选选项
+    """
+    try:
+        # 获取所有局站
+        stations = db.query(Device.station).filter(Device.station.isnot(None)).filter(Device.station != '').distinct().all()
+        station_list = [station[0] for station in stations if station[0]]
+        station_list.sort()
+        
+        # 获取所有连接类型
+        connection_types = db.query(Connection.connection_type).filter(Connection.connection_type.isnot(None)).filter(Connection.connection_type != '').distinct().all()
+        connection_type_list = [conn_type[0] for conn_type in connection_types if conn_type[0]]
+        connection_type_list.sort()
+        
+        return JSONResponse(content={
+            "success": True,
+            "data": {
+                "device_types": STANDARD_DEVICE_TYPES,  # 使用新的标准设备类型列表
+                "connection_types": connection_type_list,
+                "stations": station_list
+            }
+        })
+        
+    except Exception as e:
+        print(f"获取筛选选项失败: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"获取筛选选项失败: {str(e)}")
 
 
 @app.get("/api/devices/lifecycle-status")

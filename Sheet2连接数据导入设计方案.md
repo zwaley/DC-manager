@@ -20,7 +20,7 @@
 | A端空开规格 | source_breaker_spec | String(100) | A端空开规格 | 端口选项2 |
 | 上下级 | hierarchy_relation | String(20) | 上下级关系 | - |
 | 上下游 | upstream_downstream | String(20) | 上下游关系 | - |
-| 连接类型（电缆/铜排/母线） | connection_type | String(20) | 连接类型 | cable/busbar/busway |
+| 连接类型（交流/直流） | connection_type | String(20) | 连接类型 | AC/DC |
 | 电缆型号 | cable_model | String(100) | 电缆型号 | - |
 | B端设备名称 | target_device_name | String | 用于查找target_device_id | - |
 | B端熔丝编号 | target_fuse_number | String(50) | B端熔丝编号 | 端口选项1 |
@@ -82,8 +82,8 @@ def validate_port_logic(row):
 ```python
 CONNECTION_TYPE_MAPPING = {
     '电缆': 'cable',
-    '铜排': 'busbar', 
-    '母线': 'busway',
+    '交流': 'AC',
+'直流': 'DC',
     # 兼容性映射
     'cable': 'cable',
     'busbar': 'busbar',
@@ -125,7 +125,7 @@ def find_device_by_name(device_name, db_session):
 REQUIRED_FIELDS = [
     'A端设备名称',
     'B端设备名称', 
-    '连接类型（电缆 / 铜排 / 母线）'
+    '连接类型（交流 / 直流）'
 ]
 ```
 
