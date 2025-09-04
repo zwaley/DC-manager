@@ -2033,11 +2033,21 @@ async def create_device(
     return RedirectResponse(url="/", status_code=303)
 
 @app.get("/graph_data/{device_id}")
-async def get_graph_data(device_id: int, db: Session = Depends(get_db)):
+async def get_graph_data(
+    device_id: int, 
+    level: str = Query("device", regex="^(device|port)$", description="显示级别：device=设备级，port=端口级"),
+    station: Optional[str] = Query(None, description="按站点筛选"),
+    device_type: Optional[str] = Query(None, description="按设备类型筛选"),
+    connection_type: Optional[str] = Query(None, description="按连接类型筛选"),
+    show_critical_only: bool = Query(False, description="仅显示关键设备"),
+    db: Session = Depends(get_db)
+):
+    """获取拓扑图数据，支持多种筛选条件"""
     nodes = []
     edges = []
     processed_ids = set()
 
+    # 查找起始设备
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -2048,37 +2058,209 @@ async def get_graph_data(device_id: int, db: Session = Depends(get_db)):
     while queue:
         current_device = queue.pop(0)
 
+        # 应用设备筛选条件
+        if not _should_include_device(current_device, station, device_type, show_critical_only):
+            continue
+
         if current_device.id not in processed_ids:
-            # 在悬浮提示中也加入资产编号
-            nodes.append({
-                "id": current_device.id,
-                "label": current_device.name,
-                "title": f"""<b>资产编号:</b> {current_device.asset_id}<br>
-                             <b>名称:</b> {current_device.name}<br>
-                             <b>型号:</b> {current_device.model or 'N/A'}<br>
-                             <b>位置:</b> {current_device.location or 'N/A'}<br>
-                             <b>功率:</b> {current_device.power_rating or 'N/A'}""",
-                "level": 0 
-            })
+            # 根据显示级别构建节点数据
+            if level == "port":
+                # 端口级显示：为每个设备的端口创建节点
+                port_nodes = _create_port_nodes(current_device, db)
+                nodes.extend(port_nodes)
+            else:
+                # 设备级显示：为设备创建节点
+                node_data = {
+                    "id": current_device.id,
+                    "label": current_device.name,
+                    "title": f"""<b>资产编号:</b> {current_device.asset_id}<br>
+                                 <b>名称:</b> {current_device.name}<br>
+                                 <b>设备类型:</b> {current_device.device_type or 'N/A'}<br>
+                                 <b>站点:</b> {current_device.station or 'N/A'}<br>
+                                 <b>型号:</b> {current_device.model or 'N/A'}<br>
+                                 <b>位置:</b> {current_device.location or 'N/A'}<br>
+                                 <b>功率:</b> {current_device.power_rating or 'N/A'}""",
+                    "level": 0,
+                    "device_type": current_device.device_type,
+                    "station": current_device.station
+                }
+                nodes.append(node_data)
             processed_ids.add(current_device.id)
 
-        # 向上游查找
+        # 向上游查找连接
         for conn in current_device.target_connections:
+            # 应用连接筛选条件
+            if not _should_include_connection(conn, connection_type):
+                continue
+                
             source_device = conn.source_device
             if source_device and source_device.id not in visited_ids:
-                edges.append({"from": source_device.id, "to": current_device.id, "arrows": "to", "label": conn.cable_type or ""})
-                visited_ids.add(source_device.id)
-                queue.append(source_device)
+                # 检查源设备是否符合筛选条件
+                if _should_include_device(source_device, station, device_type, show_critical_only):
+                    if level == "port":
+                        # 端口级连接
+                        port_edges = _create_port_edges(conn, "upstream")
+                        edges.extend(port_edges)
+                    else:
+                        # 设备级连接
+                        edge_data = {
+                            "from": source_device.id, 
+                            "to": current_device.id, 
+                            "arrows": "to", 
+                            "label": conn.connection_type or conn.cable_type or "",
+                            "connection_type": conn.connection_type,
+                            "cable_type": conn.cable_type
+                        }
+                        edges.append(edge_data)
+                    visited_ids.add(source_device.id)
+                    queue.append(source_device)
 
-        # 向下游查找
+        # 向下游查找连接
         for conn in current_device.source_connections:
+            # 应用连接筛选条件
+            if not _should_include_connection(conn, connection_type):
+                continue
+                
             target_device = conn.target_device
             if target_device and target_device.id not in visited_ids:
-                edges.append({"from": current_device.id, "to": target_device.id, "arrows": "to", "label": conn.cable_type or ""})
-                visited_ids.add(target_device.id)
-                queue.append(target_device)
+                # 检查目标设备是否符合筛选条件
+                if _should_include_device(target_device, station, device_type, show_critical_only):
+                    if level == "port":
+                        # 端口级连接
+                        port_edges = _create_port_edges(conn, "downstream")
+                        edges.extend(port_edges)
+                    else:
+                        # 设备级连接
+                        edge_data = {
+                            "from": current_device.id, 
+                            "to": target_device.id, 
+                            "arrows": "to", 
+                            "label": conn.connection_type or conn.cable_type or "",
+                            "connection_type": conn.connection_type,
+                            "cable_type": conn.cable_type
+                        }
+                        edges.append(edge_data)
+                    visited_ids.add(target_device.id)
+                    queue.append(target_device)
                 
-    return JSONResponse(content={"nodes": nodes, "edges": edges})
+    return JSONResponse(content={"nodes": nodes, "edges": edges, "level": level})
+
+
+def _should_include_device(device: Device, station: Optional[str], device_type: Optional[str], show_critical_only: bool) -> bool:
+    """判断设备是否应该包含在拓扑图中"""
+    # 站点筛选
+    if station and device.station != station:
+        return False
+    
+    # 设备类型筛选
+    if device_type and device.device_type != device_type:
+        return False
+    
+    # 关键设备筛选（这里可以根据业务需求定义关键设备的判断逻辑）
+    if show_critical_only:
+        # 示例：将发电机组、UPS、变压器等视为关键设备
+        critical_types = ["发电机组", "UPS", "变压器", "高压配电柜", "低压配电柜"]
+        if device.device_type not in critical_types:
+            return False
+    
+    return True
+
+
+def _should_include_connection(connection: Connection, connection_type: Optional[str]) -> bool:
+    """判断连接是否应该包含在拓扑图中"""
+    # 连接类型筛选
+    if connection_type and connection.connection_type != connection_type:
+        return False
+    
+    return True
+
+
+def _create_port_nodes(device: Device, db: Session) -> list:
+    """为设备创建端口级节点"""
+    port_nodes = []
+    
+    # 获取设备的所有连接，提取端口信息
+    connections = db.query(Connection).filter(
+        or_(Connection.source_device_id == device.id, Connection.target_device_id == device.id)
+    ).all()
+    
+    ports = set()
+    for conn in connections:
+        if conn.source_device_id == device.id:
+            if conn.source_fuse_number:
+                ports.add(f"fuse_{conn.source_fuse_number}")
+            if conn.source_breaker_number:
+                ports.add(f"breaker_{conn.source_breaker_number}")
+        if conn.target_device_id == device.id:
+            if conn.target_fuse_number:
+                ports.add(f"fuse_{conn.target_fuse_number}")
+            if conn.target_breaker_number:
+                ports.add(f"breaker_{conn.target_breaker_number}")
+    
+    # 为每个端口创建节点
+    for port in ports:
+        port_type, port_number = port.split('_', 1)
+        port_nodes.append({
+            "id": f"{device.id}_{port}",
+            "label": f"{device.name}\n{port_type.upper()}-{port_number}",
+            "title": f"""<b>设备:</b> {device.name}<br>
+                         <b>端口:</b> {port_type.upper()}-{port_number}<br>
+                         <b>设备类型:</b> {device.device_type or 'N/A'}""",
+            "level": 0,
+            "device_id": device.id,
+            "port_type": port_type,
+            "port_number": port_number
+        })
+    
+    return port_nodes
+
+
+def _create_port_edges(connection: Connection, direction: str) -> list:
+    """为连接创建端口级边"""
+    edges = []
+    
+    # 根据连接方向确定源和目标
+    if direction == "upstream":
+        source_device_id = connection.source_device_id
+        target_device_id = connection.target_device_id
+        source_fuse = connection.source_fuse_number
+        source_breaker = connection.source_breaker_number
+        target_fuse = connection.target_fuse_number
+        target_breaker = connection.target_breaker_number
+    else:  # downstream
+        source_device_id = connection.source_device_id
+        target_device_id = connection.target_device_id
+        source_fuse = connection.source_fuse_number
+        source_breaker = connection.source_breaker_number
+        target_fuse = connection.target_fuse_number
+        target_breaker = connection.target_breaker_number
+    
+    # 创建端口间的连接
+    source_ports = []
+    target_ports = []
+    
+    if source_fuse:
+        source_ports.append(f"{source_device_id}_fuse_{source_fuse}")
+    if source_breaker:
+        source_ports.append(f"{source_device_id}_breaker_{source_breaker}")
+    if target_fuse:
+        target_ports.append(f"{target_device_id}_fuse_{target_fuse}")
+    if target_breaker:
+        target_ports.append(f"{target_device_id}_breaker_{target_breaker}")
+    
+    # 创建端口间的连接边
+    for source_port in source_ports:
+        for target_port in target_ports:
+            edges.append({
+                "from": source_port,
+                "to": target_port,
+                "arrows": "to",
+                "label": connection.connection_type or connection.cable_type or "",
+                "connection_type": connection.connection_type,
+                "cable_type": connection.cable_type
+            })
+    
+    return edges
 
 
 # 新增API路径：/api/power-chain/{device_id} - 与/graph_data/{device_id}功能相同，保持向后兼容
