@@ -25,7 +25,7 @@ from config import ADMIN_PASSWORD, PORT
 
 # 修正了导入，使用正确的函数名和模型
 from models import SessionLocal, Device, Connection, LifecycleRule, create_db_and_tables
-from device_types import validate_device_type, get_device_type_suggestions, STANDARD_DEVICE_TYPES
+from device_types import STANDARD_DEVICE_TYPES, validate_device_type, get_device_type_suggestions, STANDARD_DEVICE_TYPES
 
 
 # --- 端口统计服务类 ---
@@ -1219,12 +1219,10 @@ async def read_root(request: Request, db: Session = Depends(get_db)):
         station_list.sort()  # 按字母顺序排序
         print(f"找到 {len(station_list)} 个不同的局站: {station_list}")
         
-        # 获取所有不重复的设备类型列表，用于筛选下拉框
-        print("正在获取设备类型列表...")
-        device_types = db.query(Device.device_type).filter(Device.device_type.isnot(None)).filter(Device.device_type != '').distinct().all()
-        device_type_list = [device_type[0] for device_type in device_types if device_type[0]]  # 提取设备类型并过滤空值
-        device_type_list.sort()  # 按字母顺序排序
-        print(f"找到 {len(device_type_list)} 个不同的设备类型: {device_type_list}")
+        # 使用预定义的标准设备类型列表
+        print("正在加载标准设备类型列表...")
+        device_type_list = sorted(STANDARD_DEVICE_TYPES)
+        print(f"加载了 {len(device_type_list)} 个标准设备类型: {device_type_list}")
         
         # 获取所有不重复的厂家列表，用于筛选下拉框
         print("正在获取厂家列表...")

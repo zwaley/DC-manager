@@ -493,7 +493,12 @@
                         </div>
                         <div class="col-md-3">
                             <label class="form-label fw-bold text-primary">设备类型 *</label>
-                            <input type="text" name="device_type" class="form-control" placeholder="如：开关电源、UPS、蓄电池等" required>
+                            <select name="device_type" class="form-select" required>
+                                <option value="" disabled selected>请选择设备类型</option>
+                                {% for type in device_types %}
+                                <option value="{{ type }}">{{ type }}</option>
+                                {% endfor %}
+                            </select>
                         </div>
                     </div>
                     
