@@ -2070,16 +2070,13 @@ async def get_graph_data(
                 nodes.extend(port_nodes)
             else:
                 # 设备级显示：为设备创建节点
+                # 计算设备生命周期状态
+                lifecycle_status = _get_device_lifecycle_status(current_device, db)
+                
                 node_data = {
                     "id": current_device.id,
                     "label": current_device.name,
-                    "title": f"""<b>资产编号:</b> {current_device.asset_id}<br>
-                                 <b>名称:</b> {current_device.name}<br>
-                                 <b>设备类型:</b> {current_device.device_type or 'N/A'}<br>
-                                 <b>站点:</b> {current_device.station or 'N/A'}<br>
-                                 <b>型号:</b> {current_device.model or 'N/A'}<br>
-                                 <b>位置:</b> {current_device.location or 'N/A'}<br>
-                                 <b>功率:</b> {current_device.power_rating or 'N/A'}""",
+                    "title": f"""资产编号: {current_device.asset_id}\n名称: {current_device.name}\n设备类型: {current_device.device_type or 'N/A'}\n站点: {current_device.station or 'N/A'}\n型号: {current_device.model or 'N/A'}\n位置: {current_device.location or 'N/A'}\n额定容量: {current_device.power_rating or 'N/A'}\n生产厂家: {current_device.vendor or 'N/A'}\n投产时间: {current_device.commission_date or 'N/A'}\n生命周期状态: {lifecycle_status}""",
                     "level": 0,
                     "device_type": current_device.device_type,
                     "station": current_device.station
@@ -2146,8 +2143,91 @@ async def get_graph_data(
     return JSONResponse(content={"nodes": nodes, "edges": edges, "level": level})
 
 
+def _get_device_lifecycle_status(device: Device, db: Session) -> str:
+    """计算设备的生命周期状态 - 复用已有的完整实现逻辑"""
+    try:
+        from datetime import datetime
+        import re
+        
+        # 查找对应的生命周期规则
+        rule = db.query(LifecycleRule).filter(
+            LifecycleRule.device_type == device.device_type,
+            LifecycleRule.is_active == "true"
+        ).first()
+        
+        if not rule:
+            return "未配置规则"
+        
+        # 解析投产日期
+        if not device.commission_date:
+            return "投产日期未填写"
+        
+        commission_date = None
+        date_str = device.commission_date.strip()
+        current_date = datetime.now()
+        
+        # 处理特殊格式：YYYYMM (如 202312)
+        if re.match(r'^\d{6}$', date_str):
+            try:
+                year = int(date_str[:4])
+                month = int(date_str[4:6])
+                commission_date = datetime(year, month, 1)
+            except ValueError:
+                pass
+        
+        # 如果特殊格式解析失败，尝试标准格式
+        if not commission_date:
+            date_formats = [
+                "%Y-%m-%d",
+                "%Y/%m/%d", 
+                "%Y.%m.%d",
+                "%Y-%m",
+                "%Y/%m",
+                "%Y.%m",
+                "%Y"
+            ]
+            
+            for fmt in date_formats:
+                try:
+                    if fmt == "%Y":
+                        # 只有年份的情况，默认为该年的1月1日
+                        commission_date = datetime.strptime(device.commission_date, fmt).replace(month=1, day=1)
+                    elif fmt in ["%Y-%m", "%Y/%m", "%Y.%m"]:
+                        # 只有年月的情况，默认为该月的1日
+                        commission_date = datetime.strptime(device.commission_date, fmt).replace(day=1)
+                    else:
+                        commission_date = datetime.strptime(device.commission_date, fmt)
+                    break
+                except ValueError:
+                    continue
+        
+        if not commission_date:
+            return "投产日期格式无法识别"
+        
+        # 计算服役时间和剩余时间
+        days_in_service = (current_date - commission_date).days
+        lifecycle_days = rule.lifecycle_years * 365
+        remaining_days = lifecycle_days - days_in_service
+        warning_days = rule.warning_months * 30
+        
+        # 确定生命周期状态
+        if remaining_days < 0:
+            return f"已超期 {abs(remaining_days)} 天"
+        elif remaining_days <= warning_days:
+            return f"临近超限，剩余 {remaining_days} 天"
+        else:
+            return f"正常，剩余 {remaining_days} 天"
+            
+    except Exception as e:
+        return "计算错误"
+
+
 def _should_include_device(device: Device, station: Optional[str], device_type: Optional[str], show_critical_only: bool) -> bool:
     """判断设备是否应该包含在拓扑图中"""
+    # 基础数据验证：过滤掉名称无效的设备
+    if not device.name or device.name.strip() == "" or device.name.lower() in ["nan", "null", "none"]:
+        return False
+    
     # 站点筛选
     if station and device.station != station:
         return False
@@ -2322,9 +2402,18 @@ async def get_power_chain_data(device_id: int, db: Session = Depends(get_db)):
     return JSONResponse(content={"nodes": nodes, "edges": edges})
 
 
+@app.get("/graph", response_class=HTMLResponse)
+async def get_topology_graph_page(request: Request, db: Session = Depends(get_db)):
+    """拓扑图页面 - 显示所有设备供用户选择"""
+    devices = db.query(Device).all()
+    return templates.TemplateResponse("graph.html", {"request": request, "devices": devices})
+
+
 @app.get("/graph/{device_id}", response_class=HTMLResponse)
-async def get_power_chain_graph(request: Request, device_id: int):
-    return templates.TemplateResponse("graph.html", {"request": request, "device_id": device_id})
+async def get_power_chain_graph(request: Request, device_id: int, db: Session = Depends(get_db)):
+    """特定设备的拓扑图页面 - 兼容旧版本URL"""
+    devices = db.query(Device).all()
+    return templates.TemplateResponse("graph.html", {"request": request, "devices": devices, "selected_device_id": device_id})
 
 
 # --- 设备生命周期规则管理 API ---

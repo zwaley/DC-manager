@@ -179,23 +179,55 @@
                     zoomView: true,  // 是否可以缩放视图
                     tooltipDelay: 300,
                 },
-                physics: { // 物理引擎配置，用于稳定图形
+                physics: { // 物理引擎配置，防止拖动时所有节点跟着移动
                     enabled: true,
-                    solver: 'barnesHut',
-                    barnesHut: {
-                        gravitationalConstant: -8000,
-                        springConstant: 0.04,
-                        springLength: 95
+                    solver: 'hierarchicalRepulsion',
+                    hierarchicalRepulsion: {
+                        centralGravity: 0.0,
+                        springLength: 100,
+                        springConstant: 0.005,
+                        nodeDistance: 100,
+                        damping: 0.15
                     },
+                    maxVelocity: 10,
+                    minVelocity: 0.05,
                     stabilization: {
-                        iterations: 1000
-                    }
+                        enabled: true,
+                        iterations: 1500,
+                        updateInterval: 100,
+                        onlyDynamicEdges: false,
+                        fit: false // 禁用自动适应，保持视觉稳定
+                    },
+                    timestep: 0.3,
+                    adaptiveTimestep: false // 禁用自适应时间步长
                 },
                 nodes: { // 节点样式配置
                     shape: 'box',
-                    margin: 10,
+                    margin: 5, // 减小边距
                     widthConstraint: {
-                        maximum: 200
+                        minimum: 100,
+                        maximum: 150
+                    },
+                    heightConstraint: {
+                        minimum: 40
+                    },
+                    font: {
+                        size: 11,
+                        face: 'Arial',
+                        multi: false,
+                        align: 'center'
+                    },
+                    borderWidth: 1,
+                    shadow: {
+                        enabled: true,
+                        color: 'rgba(0,0,0,0.15)',
+                        size: 3,
+                        x: 1,
+                        y: 1
+                    },
+                    fixed: {
+                        x: false,
+                        y: false
                     }
                 },
                 edges: { // 连接线样式配置
@@ -212,7 +244,20 @@
                     }
                 },
                 layout: {
-                    hierarchical: false // 是否启用层级布局
+                    randomSeed: 2, // 固定随机种子，确保布局一致性
+                    improvedLayout: true,
+                    clusterThreshold: 150,
+                    hierarchical: {
+                        enabled: false,
+                        levelSeparation: 150,
+                        nodeSpacing: 100,
+                        treeSpacing: 200,
+                        blockShifting: true,
+                        edgeMinimization: true,
+                        parentCentralization: true,
+                        direction: 'UD',
+                        sortMethod: 'hubsize'
+                    }
                 }
             };
 
@@ -294,10 +339,11 @@
                         return response.json();
                     })
                     .then(data => {
-                        // 应用节点样式
+                        // 应用节点样式和格式化标签
                         const styledNodes = data.nodes.map(node => {
                             return {
                                 ...node,
+                                label: formatNodeLabel(node.label),
                                 ...getNodeStyle(node)
                             };
                         });
@@ -324,12 +370,80 @@
                                 // 这里可以添加节点点击事件处理逻辑
                             }
                         });
+                        
+                        // 优化拖动行为：拖动时临时启用物理引擎
+                        network.on('dragStart', function(params) {
+                            if (params.nodes.length > 0) {
+                                // 拖动开始时，临时启用物理引擎但固定其他节点
+                                network.setOptions({physics: {enabled: true}});
+                                const allNodes = graphData.nodes.get();
+                                const draggedNodeId = params.nodes[0];
+                                
+                                allNodes.forEach(node => {
+                                    if (node.id !== draggedNodeId) {
+                                        graphData.nodes.update({id: node.id, fixed: {x: true, y: true}});
+                                    }
+                                });
+                            }
+                        });
+                        
+                        network.on('dragEnd', function(params) {
+                            if (params.nodes.length > 0) {
+                                // 拖动结束后，快速禁用物理引擎并释放节点固定状态
+                                const allNodes = graphData.nodes.get();
+                                
+                                allNodes.forEach(node => {
+                                    graphData.nodes.update({id: node.id, fixed: {x: false, y: false}});
+                                });
+                                
+                                // 短暂延迟后禁用物理引擎，防止自动重排
+                                setTimeout(() => {
+                                    network.setOptions({physics: {enabled: false}});
+                                }, 100);
+                            }
+                        });
+                        
+                        // 稳定化完成后的处理
+                        network.on('stabilizationIterationsDone', function() {
+                            console.log('网络布局稳定化完成');
+                            // 可以在这里添加稳定化完成后的处理逻辑
+                        });
+                        
+                        // 初始化时适应视图，但不使用动画以保持稳定
+                        network.fit({
+                            animation: false
+                        });
+                        
+                        // 稳定化后禁用物理引擎以防止自动重排
+                        network.once('stabilizationIterationsDone', function() {
+                            setTimeout(() => {
+                                network.setOptions({physics: {enabled: false}});
+                            }, 500);
+                        });
                     })
                     .catch(error => {
                         // 如果API调用失败，在容器中显示错误信息
                         console.error('获取拓扑数据失败:', error);
                         container.innerHTML = `<div class="alert alert-danger" role="alert">加载拓扑图失败: ${error.message}</div>`;
                     });
+            }
+
+            // 格式化节点标签，将机房名称和设备名称分行显示
+            function formatNodeLabel(originalLabel) {
+                if (!originalLabel) return '';
+                
+                // 查找机房名称结束的位置（通常以"_"分隔）
+                const parts = originalLabel.split('_');
+                if (parts.length >= 2) {
+                    const roomName = parts[0]; // 机房名称
+                    const deviceName = parts.slice(1).join('_'); // 设备名称（可能包含多个下划线）
+                    
+                    // 使用换行符进行分行显示，不使用HTML标签
+                    return `${roomName}\n${deviceName}`;
+                } else {
+                    // 如果没有下划线分隔，直接返回原标签
+                    return originalLabel;
+                }
             }
 
             // 根据设备类型获取节点样式
@@ -431,6 +545,19 @@
 
             // 初始化
             initializeFilterOptions();
+            
+            // 检查是否有预选设备ID（从URL参数或模板变量）
+            {% if selected_device_id %}
+            const preselectedDeviceId = {{ selected_device_id }};
+            if (preselectedDeviceId) {
+                deviceSelect.value = preselectedDeviceId;
+                currentDeviceId = preselectedDeviceId;
+                // 延迟加载，确保筛选选项已初始化
+                setTimeout(() => {
+                    loadTopologyData(currentDeviceId);
+                }, 1000);
+            }
+            {% endif %}
         });
     </script>
 </body>
